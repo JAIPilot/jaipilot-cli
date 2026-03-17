@@ -1,0 +1,43 @@
+project:
+  name: jaipilot
+  description: JAIPilot CLI
+  longDescription: JAIPilot CLI runs JaCoCo and PIT for Maven projects and prints an actionable PASS or FAIL report.
+  license: MIT
+  copyright: 2026 skrcode
+  authors:
+    - skrcode
+  links:
+    homepage: https://github.com/skrcode/jaipilot-cli
+  languages:
+    java:
+      groupId: com.jaipilot
+      version: 17
+
+release:
+  github:
+    owner: skrcode
+    name: jaipilot-cli
+    overwrite: true
+
+distributions:
+  jaipilot:
+    type: JAVA_BINARY
+    stereotype: CLI
+    executable:
+      name: jaipilot
+      windowsExtension: cmd
+    artifacts:
+      - path: target/distributions/jaipilot-{{projectVersion}}.zip
+      - path: target/distributions/jaipilot-{{projectVersion}}.tar.gz
+        extraProperties:
+          skipBrew: true
+
+packagers:
+  brew:
+    active: ALWAYS
+    multiPlatform: true
+    repository:
+      active: ALWAYS
+      owner: skrcode
+      name: homebrew-tap
+      branch: main

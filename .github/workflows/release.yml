@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Resolve version
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release artifacts
+        run: ./mvnw -B -ntp -Drevision=${{ steps.version.outputs.value }} verify
+
+      - name: Smoke test packaged archives
+        run: |
+          VERSION="${{ steps.version.outputs.value }}"
+          ZIP="target/distributions/jaipilot-${VERSION}.zip"
+          TGZ="target/distributions/jaipilot-${VERSION}.tar.gz"
+          test -f "$ZIP"
+          test -f "$TGZ"
+          mkdir -p target/smoke/zip target/smoke/tar
+          unzip -q "$ZIP" -d target/smoke/zip
+          tar -xzf "$TGZ" -C target/smoke/tar
+          target/smoke/zip/jaipilot-${VERSION}/bin/jaipilot --version
+          target/smoke/tar/jaipilot-${VERSION}/bin/jaipilot --version
+
+      - name: Publish GitHub release and Homebrew formula
+        uses: jreleaser/release-action@v2
+        with:
+          version: 1.22.0
+          arguments: full-release
+        env:
+          JRELEASER_PROJECT_VERSION: ${{ steps.version.outputs.value }}
+          JRELEASER_GITHUB_TOKEN: ${{ secrets.GH_PAT }}

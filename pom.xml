@@ -6,7 +6,7 @@
 
     <groupId>com.jaipilot</groupId>
     <artifactId>jaipilot-cli</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>${revision}</version>
     <packaging>jar</packaging>
 
     <name>JAIPilot CLI</name>
@@ -29,6 +29,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <revision>0.1.0-SNAPSHOT</revision>
         <maven.compiler.release>17</maven.compiler.release>
         <picocli.version>4.7.7</picocli.version>
         <junit.version>5.11.4</junit.version>
@@ -36,6 +37,7 @@
         <maven.surefire.plugin.version>3.5.2</maven.surefire.plugin.version>
         <maven.jar.plugin.version>3.4.2</maven.jar.plugin.version>
         <maven.shade.plugin.version>3.6.0</maven.shade.plugin.version>
+        <maven.assembly.plugin.version>3.7.1</maven.assembly.plugin.version>
         <maven.enforcer.plugin.version>3.5.0</maven.enforcer.plugin.version>
     </properties>
 
@@ -105,6 +107,9 @@
                 <version>${maven.jar.plugin.version}</version>
                 <configuration>
                     <archive>
+                        <manifestEntries>
+                            <Implementation-Version>${project.version}</Implementation-Version>
+                        </manifestEntries>
                         <manifest>
                             <mainClass>com.jaipilot.cli.JaiPilotCli</mainClass>
                         </manifest>
@@ -139,6 +144,29 @@
                                     <mainClass>com.jaipilot.cli.JaiPilotCli</mainClass>
                                 </transformer>
                             </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>${maven.assembly.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>dist</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <descriptors>
+                                <descriptor>src/assembly/distribution.xml</descriptor>
+                            </descriptors>
+                            <finalName>jaipilot-${project.version}</finalName>
+                            <appendAssemblyId>false</appendAssemblyId>
+                            <outputDirectory>${project.build.directory}/distributions</outputDirectory>
                         </configuration>
                     </execution>
                 </executions>
