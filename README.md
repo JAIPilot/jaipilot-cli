@@ -8,7 +8,8 @@ JAIPilot is a zero-config test safety harness for Java Maven applications - ensu
 
 High coverage robust unit tests allows you to run multiple coding agents (claude code, codex, cursor) safely on your codebase - existing tests invoke all new code written via agents and can quickly get corrected. 
 
-Having a high coverage (100% branch, line, mutation) repo allows the agent to use existing tests as a guardrail and feedback loop. New code would also have to be 100% covered.    
+Having a high coverage (100% branch, line, mutation) repo allows the agent to use existing tests as a guardrail and feedback loop. New code would also have to be 100% covered. 
+`jaipilot verify` should run once via your coding agent to ensure all existing code is covered (>80%). Update your `SKILL.md` to ensure that all newly written code also run `jaipilot verify` and gets covered to 100%.    
 `jaipilot verify` runs JaCoCo coverage checks and PIT mutation testing, then prints an actionable PASS or FAIL report that helps developers and coding agents tighten tests before shipping changes.
 
 It is designed to work alongside Claude Code, Cursor, Codex, and similar tools. Agents can change code, run `jaipilot verify`, inspect weak coverage and surviving mutations, add or improve tests, and repeat until the project is well protected.
