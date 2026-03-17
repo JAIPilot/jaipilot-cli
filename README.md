@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/skrcode/jaipilot-cli)](https://github.com/skrcode/jaipilot-cli/releases)
 [![License](https://img.shields.io/github/license/skrcode/jaipilot-cli)](LICENSE)
 
-JAIPilot is a zero-config test safety harness for Java Maven projects. It helps keep AI-assisted changes safe by enforcing strong test coverage and mutation resistance before code ships.
+JAIPilot is a zero-config test safety harness for Java Maven projects. It helps keep code written by agents safe by enforcing strong test coverage and mutation resistance before code ships.
 
 With high-coverage, robust unit tests, you can let coding agents such as Claude Code, Codex, and Cursor work on your codebase with a much tighter feedback loop. Existing tests validate new changes quickly, and weak spots become visible immediately.
 
