@@ -65,7 +65,7 @@ JAIPilot works best as the verification loop around an agent. Ask Claude Code, C
 Example prompt:
 
 ```text
-Keep running `jaipilot verify`. For every failing coverage or mutation check, add or improve tests until the project passes and coverage is as high as practical.
+Keep running `jaipilot verify` until you reach 80% (or 100%).
 ```
 
 ## What `jaipilot verify` Gives You
