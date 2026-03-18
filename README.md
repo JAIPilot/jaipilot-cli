@@ -12,15 +12,26 @@
       <img src="https://img.shields.io/github/license/skrcode/jaipilot-cli" alt="License">
     </a>
   </p>
+  <p>
+    <a href="#install"><strong>Install</strong></a>
+    ·
+    <a href="#quick-start"><strong>Quick Start</strong></a>
+    ·
+    <a href="#use-with-coding-agents"><strong>Use With Coding Agents</strong></a>
+    ·
+    <a href="#development"><strong>Development</strong></a>
+  </p>
 </div>
 
-JAIPilot is a zero-config test safety harness for Java Maven projects. It helps keep code written by agents safe by enforcing strong test coverage and mutation resistance before code ships.
+<p align="center">
+  JAIPilot is a zero-config test safety harness for Java Maven projects. It runs JaCoCo coverage checks and PIT mutation testing, then prints an actionable <code>PASS</code> or <code>FAIL</code> report for humans and coding agents.
+</p>
+
+<hr />
 
 With high-coverage, robust unit tests, you can let coding agents such as Claude Code, Codex, and Cursor work on your codebase with a much tighter feedback loop. Existing tests validate new changes quickly, and weak spots become visible immediately.
 
 If your repository already has high line, branch, and mutation coverage, agents can use that test suite as a guardrail. New code can then be held to the same standard.
-
-Run `jaipilot verify` to execute JaCoCo coverage checks and PIT mutation testing. It prints an actionable `PASS` or `FAIL` report that helps developers and coding agents tighten tests before merging changes.
 
 It is designed to work alongside Claude Code, Cursor, Codex, and similar tools. Agents can change code, run `jaipilot verify`, inspect weak coverage and surviving mutations, add or improve tests, and repeat until the project is well protected.
 
@@ -92,6 +103,13 @@ Example prompt:
 ```text
 Keep running `jaipilot verify` and update tests until you reach 80% (or 100%).
 ```
+
+<details>
+<summary><strong>Why this works well with agents</strong></summary>
+
+JAIPilot gives coding agents a concrete feedback loop. Instead of guessing whether a change is safe, the agent can rerun verification, inspect coverage gaps and surviving mutations, improve tests, and iterate until the project is protected.
+
+</details>
 
 ## What `jaipilot verify` Gives You
 
