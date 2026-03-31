@@ -2,5 +2,10 @@
 set -eu
 
 BASE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+RUNTIME_JAVA="$BASE_DIR/runtime/bin/java"
+
+if [ -x "$RUNTIME_JAVA" ]; then
+  exec "$RUNTIME_JAVA" -jar "$BASE_DIR/lib/jaipilot.jar" "$@"
+fi
 
 exec java -jar "$BASE_DIR/lib/jaipilot.jar" "$@"

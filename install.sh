@@ -4,24 +4,28 @@ set -eu
 REPO="skrcode/jaipilot-cli"
 PREFIX="${HOME}/.local"
 BIN_DIR=""
-LIB_DIR=""
+APP_DIR=""
 VERSION=""
 ARCHIVE_URL=""
 CHECKSUM_URL=""
+PLATFORM=""
 
 usage() {
   cat <<'EOF'
 Usage: install.sh [options]
 
-Installs the latest JAIPilot release with an archive checksum verification step.
+Installs the latest JAIPilot release with a bundled Java runtime and an archive
+checksum verification step.
 
 Options:
   --version <version>      Install a specific release version.
+  --platform <platform>    Override platform detection. Example: macos-aarch64.
   --archive-url <url>      Override the release archive URL. Intended for testing.
   --checksum-url <url>     Override the archive checksum URL. Intended for testing.
   --prefix <dir>           Installation prefix. Default: ~/.local
   --bin-dir <dir>          Explicit bin directory. Overrides --prefix/bin.
-  --lib-dir <dir>          Explicit library directory. Overrides --prefix/share/jaipilot.
+  --app-dir <dir>          Explicit app directory. Overrides --prefix/share/jaipilot.
+  --lib-dir <dir>          Deprecated alias for --app-dir.
   -h, --help               Show this help text.
 EOF
 }
@@ -87,6 +91,30 @@ resolve_latest_version() {
   strip_v "$version"
 }
 
+resolve_os() {
+  case "$(uname -s)" in
+    Linux) printf 'linux\n' ;;
+    Darwin) printf 'macos\n' ;;
+    *) die "Unsupported operating system: $(uname -s)" ;;
+  esac
+}
+
+resolve_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) printf 'x64\n' ;;
+    arm64|aarch64) printf 'aarch64\n' ;;
+    *) die "Unsupported architecture: $(uname -m)" ;;
+  esac
+}
+
+resolve_platform() {
+  if [ -n "$PLATFORM" ]; then
+    printf '%s\n' "$PLATFORM"
+    return
+  fi
+  printf '%s-%s\n' "$(resolve_os)" "$(resolve_arch)"
+}
+
 resolve_archive_url() {
   if [ -n "$ARCHIVE_URL" ]; then
     printf '%s\n' "$ARCHIVE_URL"
@@ -98,7 +126,8 @@ resolve_archive_url() {
   else
     resolved_version=$(resolve_latest_version)
   fi
-  printf 'https://github.com/%s/releases/download/v%s/jaipilot-%s.tar.gz\n' "$REPO" "$resolved_version" "$resolved_version"
+  resolved_platform=$(resolve_platform)
+  printf 'https://github.com/%s/releases/download/v%s/jaipilot-%s-%s.tar.gz\n' "$REPO" "$resolved_version" "$resolved_version" "$resolved_platform"
 }
 
 resolve_checksum_url() {
@@ -134,6 +163,11 @@ while [ "$#" -gt 0 ]; do
       ARCHIVE_URL=$2
       shift 2
       ;;
+    --platform)
+      [ "$#" -ge 2 ] || die "Missing value for --platform"
+      PLATFORM=$2
+      shift 2
+      ;;
     --checksum-url)
       [ "$#" -ge 2 ] || die "Missing value for --checksum-url"
       CHECKSUM_URL=$2
@@ -149,9 +183,14 @@ while [ "$#" -gt 0 ]; do
       BIN_DIR=$2
       shift 2
       ;;
+    --app-dir)
+      [ "$#" -ge 2 ] || die "Missing value for --app-dir"
+      APP_DIR=$2
+      shift 2
+      ;;
     --lib-dir)
       [ "$#" -ge 2 ] || die "Missing value for --lib-dir"
-      LIB_DIR=$2
+      APP_DIR=$2
       shift 2
       ;;
     -h|--help)
@@ -165,12 +204,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$BIN_DIR" ] || BIN_DIR="${PREFIX}/bin"
-[ -n "$LIB_DIR" ] || LIB_DIR="${PREFIX}/share/jaipilot"
+[ -n "$APP_DIR" ] || APP_DIR="${PREFIX}/share/jaipilot"
 
 require_command curl
 require_command tar
 require_command mktemp
-require_command java
 
 ARCHIVE_URL=$(resolve_archive_url)
 CHECKSUM_URL=$(resolve_checksum_url "$ARCHIVE_URL")
@@ -192,14 +230,17 @@ tar -xzf "$ARCHIVE_PATH" -C "$TMP_DIR"
 EXTRACTED_DIR=$(find "$TMP_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)
 [ -n "${EXTRACTED_DIR:-}" ] || die "Failed to unpack the JAIPilot archive."
 [ -f "$EXTRACTED_DIR/lib/jaipilot.jar" ] || die "Downloaded archive is missing lib/jaipilot.jar."
+[ -x "$EXTRACTED_DIR/bin/jaipilot" ] || die "Downloaded archive is missing bin/jaipilot."
+[ -x "$EXTRACTED_DIR/runtime/bin/java" ] || die "Downloaded archive is missing the bundled Java runtime."
 
-mkdir -p "$BIN_DIR" "$LIB_DIR"
-cp "$EXTRACTED_DIR/lib/jaipilot.jar" "$LIB_DIR/jaipilot.jar"
+mkdir -p "$BIN_DIR" "$(dirname "$APP_DIR")"
+rm -rf "$APP_DIR"
+cp -R "$EXTRACTED_DIR" "$APP_DIR"
 
 cat > "$BIN_DIR/jaipilot" <<EOF
 #!/usr/bin/env sh
 set -eu
-exec java -jar "$LIB_DIR/jaipilot.jar" "\$@"
+exec "$APP_DIR/bin/jaipilot" "\$@"
 EOF
 
 chmod +x "$BIN_DIR/jaipilot"
@@ -207,7 +248,8 @@ chmod +x "$BIN_DIR/jaipilot"
 echo "Installed JAIPilot"
 echo "  Archive: $ARCHIVE_URL"
 echo "  SHA-256: $ACTUAL_SHA256"
-echo "  Jar: $LIB_DIR/jaipilot.jar"
+echo "  App: $APP_DIR"
+echo "  Runtime: $APP_DIR/runtime/bin/java"
 echo "  Launcher: $BIN_DIR/jaipilot"
 
 if contains_path_entry "$BIN_DIR"; then

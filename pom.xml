@@ -29,7 +29,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <revision>0.2.0</revision>
+        <revision>0.3.0</revision>
         <maven.compiler.release>17</maven.compiler.release>
         <picocli.version>4.7.7</picocli.version>
         <junit.version>5.11.4</junit.version>
@@ -37,7 +37,7 @@
         <maven.surefire.plugin.version>3.5.2</maven.surefire.plugin.version>
         <maven.jar.plugin.version>3.4.2</maven.jar.plugin.version>
         <maven.shade.plugin.version>3.6.0</maven.shade.plugin.version>
-        <maven.assembly.plugin.version>3.7.1</maven.assembly.plugin.version>
+        <maven.antrun.plugin.version>3.1.0</maven.antrun.plugin.version>
         <maven.enforcer.plugin.version>3.5.0</maven.enforcer.plugin.version>
     </properties>
 
@@ -157,22 +157,23 @@
 
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-assembly-plugin</artifactId>
-                <version>${maven.assembly.plugin.version}</version>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>${maven.antrun.plugin.version}</version>
                 <executions>
                     <execution>
-                        <id>dist</id>
+                        <id>bundle-runtime-distribution</id>
                         <phase>package</phase>
                         <goals>
-                            <goal>single</goal>
+                            <goal>run</goal>
                         </goals>
                         <configuration>
-                            <descriptors>
-                                <descriptor>src/assembly/distribution.xml</descriptor>
-                            </descriptors>
-                            <finalName>jaipilot-${project.version}</finalName>
-                            <appendAssemblyId>false</appendAssemblyId>
-                            <outputDirectory>${project.build.directory}/distributions</outputDirectory>
+                            <target>
+                                <exec executable="sh" failonerror="true">
+                                    <arg value="${project.basedir}/scripts/build-bundled-dist.sh"/>
+                                    <arg value="--version"/>
+                                    <arg value="${project.version}"/>
+                                </exec>
+                            </target>
                         </configuration>
                     </execution>
                 </executions>

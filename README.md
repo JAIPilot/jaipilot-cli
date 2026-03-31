@@ -55,7 +55,15 @@ curl -fsSL https://github.com/skrcode/jaipilot-cli/releases/latest/download/inst
 sh install.sh
 ```
 
-That installs `jaipilot` into `~/.local/bin` by default and verifies the release archive SHA-256 checksum before unpacking it.
+That installs `jaipilot` into `~/.local/bin` by default, downloads the platform-specific release archive for your machine, and verifies the release archive SHA-256 checksum before unpacking it.
+
+The published installer bundles a tested Java runtime for supported platforms, so you do not need to provide your own local JDK just to run the CLI.
+
+Currently published bundled-runtime archives target:
+
+- `linux-x64`
+- `macos-x64`
+- `macos-aarch64`
 
 Make sure `~/.local/bin` is on your `PATH`.
 

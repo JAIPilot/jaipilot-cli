@@ -6,8 +6,17 @@ on:
       - "v*"
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            classifier: linux-x64
+          - os: macos-13
+            classifier: macos-x64
+          - os: macos-14
+            classifier: macos-aarch64
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
 
@@ -32,17 +41,41 @@ jobs:
         run: ./mvnw -B -ntp -Drevision=${{ steps.version.outputs.value }} verify
 
       - name: Generate release checksum
-        run: shasum -a 256 "target/distributions/jaipilot-${{ steps.version.outputs.value }}.tar.gz" > "target/distributions/jaipilot-${{ steps.version.outputs.value }}.tar.gz.sha256"
+        run: shasum -a 256 "target/distributions/jaipilot-${{ steps.version.outputs.value }}-${{ matrix.classifier }}.tar.gz" > "target/distributions/jaipilot-${{ steps.version.outputs.value }}-${{ matrix.classifier }}.tar.gz.sha256"
 
       - name: Smoke test install script
-        run: ./scripts/smoke-test-install.sh --version "${{ steps.version.outputs.value }}"
+        run: ./scripts/smoke-test-install.sh --version "${{ steps.version.outputs.value }}" --classifier "${{ matrix.classifier }}"
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundled-runtime-${{ matrix.classifier }}
+          path: |
+            target/distributions/jaipilot-${{ steps.version.outputs.value }}-${{ matrix.classifier }}.tar.gz
+            target/distributions/jaipilot-${{ steps.version.outputs.value }}-${{ matrix.classifier }}.tar.gz.sha256
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: target/release-assets
+          merge-multiple: true
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          name: JAIPilot CLI v${{ steps.version.outputs.value }}
+          name: JAIPilot CLI ${{ github.ref_name }}
           generate_release_notes: true
           files: |
-            target/distributions/jaipilot-${{ steps.version.outputs.value }}.tar.gz
-            target/distributions/jaipilot-${{ steps.version.outputs.value }}.tar.gz.sha256
+            target/release-assets/*.tar.gz
+            target/release-assets/*.sha256
             install.sh
