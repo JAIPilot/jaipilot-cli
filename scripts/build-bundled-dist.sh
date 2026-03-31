@@ -114,7 +114,7 @@ jlink \
   --strip-debug \
   --no-header-files \
   --no-man-pages \
-  --compress=zip-6
+  --compress=2
 
 cp "$REPO_ROOT/src/main/dist/bin/jaipilot" "$APP_DIR/bin/jaipilot"
 chmod +x "$APP_DIR/bin/jaipilot"
