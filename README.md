@@ -24,7 +24,7 @@
 </div>
 
 <p align="center">
-  JAIPilot is a zero-config test safety harness for Java Maven projects. It runs JaCoCo coverage checks and PIT mutation testing, then prints an actionable <code>PASS</code> or <code>FAIL</code> report for humans and coding agents.
+  JAIPilot is a Java CLI for backend-assisted JUnit generation and zero-config verification. It can call the JUnit LLM backend to generate or fix tests, then run JaCoCo and PIT checks to validate the result.
 </p>
 
 <hr />
@@ -37,6 +37,7 @@ It is designed to work alongside Claude Code, Cursor, Codex, and similar tools. 
 
 ## Why JAIPilot
 
+- Backend-assisted JUnit test generation and fix flows
 - Zero-config JaCoCo and PIT verification for Java Maven projects
 - A test safety harness for AI-assisted coding and refactoring
 - Actionable output with exact coverage gaps and mutation failures
@@ -47,19 +48,16 @@ This follows the idea described in [AI is forcing us to write good code](https:/
 
 ## Install
 
-Homebrew:
+Install with:
 
 ```sh
-brew install skrcode/tap/jaipilot
+curl -fsSL https://github.com/skrcode/jaipilot-cli/releases/latest/download/install.sh -o install.sh
+sh install.sh
 ```
 
-Fallback from source:
+That installs `jaipilot` into `~/.local/bin` by default and verifies the release archive SHA-256 checksum before unpacking it.
 
-```sh
-./scripts/install-global.sh
-```
-
-Then make sure `~/.local/bin` is on your `PATH`.
+Make sure `~/.local/bin` is on your `PATH`.
 
 ## Quick Start
 
@@ -67,6 +65,20 @@ Run inside any Maven project:
 
 ```sh
 jaipilot verify
+```
+
+Generate a JUnit test by calling the backend API:
+
+```sh
+jaipilot login
+jaipilot generate src/main/java/org/example/CrashController.java
+```
+
+Fix an existing failing test with build logs:
+
+```sh
+jaipilot fix \
+  src/test/java/org/example/CrashControllerTest.java
 ```
 
 Run with explicit thresholds:
@@ -96,12 +108,12 @@ For many teams, that means starting above 80% for the existing codebase and push
 
 ## Use With Coding Agents
 
-JAIPilot works best as the verification loop around an agent. Ask Claude Code, Cursor, Codex, or another coding agent to keep running `jaipilot verify`, inspect failures, improve tests, and repeat until the project passes with coverage as high as possible.
+JAIPilot works best as a tight generation-and-verification loop around an agent. Ask Claude Code, Cursor, Codex, or another coding agent to generate or fix tests with JAIPilot, then keep running `jaipilot verify` until the project passes with coverage as high as possible.
 
 Example prompt:
 
 ```text
-Keep running `jaipilot verify` and update tests until you reach 80% (or 100%).
+Use `jaipilot generate` or `jaipilot fix` to update tests, then keep running `jaipilot verify` until you reach 80% (or 100%).
 ```
 
 <details>
@@ -119,9 +131,35 @@ JAIPilot gives coding agents a concrete feedback loop. Instead of guessing wheth
 - Exact surviving mutations from PIT
 - Concrete next actions
 
+## JUnit LLM Commands
+
+Sign in once before using the backend-assisted flows:
+
+```sh
+jaipilot login
+```
+
+`jaipilot generate` reads the class under test, infers the output test path and backend metadata, uses any existing test file at that path as the baseline `initialTestClassCode`, submits the request to `invoke-junit-llm-cli`, polls `fetch-job`, follows any requested `requiredContextClassPaths`, writes the returned `finalTestFile`, then runs local Maven `test-compile` and a targeted `test` for the generated class. If either phase fails, JAIPilot sends sanitized Maven output back through the backend `fix` flow and keeps iterating until the target test passes or `--max-fix-attempts` is exhausted.
+
+`jaipilot fix` does the same, but it starts from the current test class as `initialTestClassCode`, sends an empty CUT payload to the backend fix flow, and automatically captures the first failing local Maven output before calling the backend.
+
+Authentication commands:
+
+- `jaipilot login` starts the browser flow and stores credentials in `~/.config/jaipilot/credentials.json` with owner-only filesystem permissions when the OS supports them.
+- `jaipilot status` shows the current signed-in user and refreshes the access token if needed.
+- `jaipilot logout` clears the stored session.
+
+Common options:
+
+- `JAIPILOT_JWT_TOKEN` can be used instead of a stored login session.
+- `--output` overrides the inferred test file path when needed.
+- `--maven-executable`, `--maven-arg`, `--timeout-seconds`, and `--max-fix-attempts` control the local compile-and-test loop after generation.
+
 ## How It Works
 
-JAIPilot prepares a temporary mirrored Maven workspace, injects the required JaCoCo and PIT plugins there, runs the verification workflow, parses the generated reports, and prints a simplified summary for humans and agents.
+For `generate` and `fix`, JAIPilot reads the local source files, calls the Supabase edge function, polls the async job endpoint, optionally resubmits requested context classes, uploads sanitized local Maven failure output when a fix pass is needed, and writes the returned test file into your project.
+
+For `verify`, JAIPilot prepares a temporary mirrored Maven workspace, injects the required JaCoCo and PIT plugins there, runs the verification workflow, parses the generated reports, and prints a simplified summary for humans and agents.
 
 The target project does not need JaCoCo or PIT configured in its own `pom.xml`.
 
@@ -131,6 +169,7 @@ The target project does not need JaCoCo or PIT configured in its own `pom.xml`.
 - A Maven project
 - JUnit 4 or JUnit 5 tests
 - Maven available via `./mvnw` or `mvn`
+- A JAIPilot login session or a valid `JAIPILOT_JWT_TOKEN` for backend-assisted `generate` and `fix`
 
 ## Current Scope
 
@@ -147,10 +186,10 @@ Build and test locally:
 ./mvnw -B verify
 ```
 
-Smoke-test the packaged distributions:
+Smoke-test the install path:
 
 ```sh
-./scripts/smoke-test-distributions.sh
+./scripts/smoke-test-install.sh
 ```
 
 ## Contributing

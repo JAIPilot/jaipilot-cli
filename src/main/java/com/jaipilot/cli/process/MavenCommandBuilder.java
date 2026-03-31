@@ -18,10 +18,7 @@ public final class MavenCommandBuilder {
             boolean skipClean,
             boolean runAggregateCoverage
     ) {
-        List<String> command = new ArrayList<>();
-        command.add(resolveMavenExecutable(buildRoot, explicitMavenExecutable));
-        command.add("-B");
-        command.add("-ntp");
+        List<String> command = baseCommand(buildRoot, explicitMavenExecutable, additionalArguments);
         command.add("-f");
         command.add(buildPomPath.toString());
         command.add("-DoutputFormats=XML");
@@ -41,6 +38,32 @@ public final class MavenCommandBuilder {
             command.add("org.jacoco:jacoco-maven-plugin:" + jacocoVersion + ":report-aggregate");
         }
         command.add("org.pitest:pitest-maven:" + pitVersion + ":mutationCoverage");
+        return command;
+    }
+
+    public List<String> buildTestCompile(
+            Path projectRoot,
+            Path explicitMavenExecutable,
+            List<String> additionalArguments
+    ) {
+        List<String> command = baseCommand(projectRoot, explicitMavenExecutable, additionalArguments);
+        command.add("-DskipTests");
+        command.add("test-compile");
+        return command;
+    }
+
+    public List<String> buildSingleTestExecution(
+            Path projectRoot,
+            Path explicitMavenExecutable,
+            List<String> additionalArguments,
+            String testSelector
+    ) {
+        List<String> command = baseCommand(projectRoot, explicitMavenExecutable, additionalArguments);
+        command.add("-DskipTests=false");
+        command.add("-DfailIfNoTests=false");
+        command.add("-Dsurefire.failIfNoSpecifiedTests=false");
+        command.add("-Dtest=" + testSelector);
+        command.add("test");
         return command;
     }
 
@@ -73,5 +96,18 @@ public final class MavenCommandBuilder {
             return projectRelative.toString();
         }
         return executable.toString();
+    }
+
+    private List<String> baseCommand(
+            Path buildRoot,
+            Path explicitMavenExecutable,
+            List<String> additionalArguments
+    ) {
+        List<String> command = new ArrayList<>();
+        command.add(resolveMavenExecutable(buildRoot, explicitMavenExecutable));
+        command.add("-B");
+        command.add("-ntp");
+        command.addAll(additionalArguments);
+        return command;
     }
 }

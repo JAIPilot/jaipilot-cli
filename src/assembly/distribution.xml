@@ -5,7 +5,6 @@
     <id>distribution</id>
     <includeBaseDirectory>true</includeBaseDirectory>
     <formats>
-        <format>zip</format>
         <format>tar.gz</format>
     </formats>
     <files>
@@ -18,10 +17,6 @@
             <source>${project.basedir}/src/main/dist/bin/jaipilot</source>
             <outputDirectory>/bin</outputDirectory>
             <fileMode>0755</fileMode>
-        </file>
-        <file>
-            <source>${project.basedir}/src/main/dist/bin/jaipilot.cmd</source>
-            <outputDirectory>/bin</outputDirectory>
         </file>
     </files>
 </assembly>

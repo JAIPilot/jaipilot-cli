@@ -1,0 +1,78 @@
+package com.jaipilot.cli.commands;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import com.jaipilot.cli.JaiPilotCli;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import org.junit.jupiter.api.Test;
+import picocli.CommandLine;
+
+class JunitLlmCommandHelpIntegrationTest {
+
+    @Test
+    void generateHelpOnlyShowsInferredFriendlyOptions() {
+        String helpOutput = executeHelp("generate");
+
+        assertTrue(helpOutput.contains("--output"));
+        assertTrue(helpOutput.contains("--maven-executable"));
+        assertTrue(helpOutput.contains("--maven-arg"));
+        assertTrue(helpOutput.contains("--timeout-seconds"));
+        assertTrue(helpOutput.contains("--max-fix-attempts"));
+        assertFalse(helpOutput.contains("--attempt-number"));
+        assertFalse(helpOutput.contains("--backend-url"));
+        assertFalse(helpOutput.contains("--cached-context"));
+        assertFalse(helpOutput.contains("--client-logs"));
+        assertFalse(helpOutput.contains("--client-logs-file"));
+        assertFalse(helpOutput.contains("--context"));
+        assertFalse(helpOutput.contains("--cut-name"));
+        assertFalse(helpOutput.contains("--jwt-token"));
+        assertFalse(helpOutput.contains("--mockito-version"));
+        assertFalse(helpOutput.contains("--new-testclass-file"));
+        assertFalse(helpOutput.contains("--project-root"));
+        assertFalse(helpOutput.contains("--session-id"));
+        assertFalse(helpOutput.contains("--test-class-name"));
+        assertFalse(helpOutput.contains("--verbose"));
+    }
+
+    @Test
+    void fixHelpOnlyShowsInferredFriendlyOptions() {
+        String helpOutput = executeHelp("fix");
+
+        assertTrue(helpOutput.contains("--output"));
+        assertTrue(helpOutput.contains("--maven-executable"));
+        assertTrue(helpOutput.contains("--maven-arg"));
+        assertTrue(helpOutput.contains("--timeout-seconds"));
+        assertTrue(helpOutput.contains("--max-fix-attempts"));
+        assertTrue(helpOutput.contains("<test>"));
+        assertFalse(helpOutput.contains("<cut>"));
+        assertFalse(helpOutput.contains("--attempt-number"));
+        assertFalse(helpOutput.contains("--backend-url"));
+        assertFalse(helpOutput.contains("--cached-context"));
+        assertFalse(helpOutput.contains("--client-logs"));
+        assertFalse(helpOutput.contains("--client-logs-file"));
+        assertFalse(helpOutput.contains("--context"));
+        assertFalse(helpOutput.contains("--cut-name"));
+        assertFalse(helpOutput.contains("--jwt-token"));
+        assertFalse(helpOutput.contains("--mockito-version"));
+        assertFalse(helpOutput.contains("--new-testclass-file"));
+        assertFalse(helpOutput.contains("--project-root"));
+        assertFalse(helpOutput.contains("--session-id"));
+        assertFalse(helpOutput.contains("--test-class-name"));
+        assertFalse(helpOutput.contains("--verbose"));
+    }
+
+    private String executeHelp(String command) {
+        StringWriter outBuffer = new StringWriter();
+        CommandLine commandLine = new CommandLine(new JaiPilotCli())
+                .setOut(new PrintWriter(outBuffer, true))
+                .setErr(new PrintWriter(new StringWriter(), true));
+
+        int exitCode = commandLine.execute(command, "--help");
+
+        assertEquals(0, exitCode);
+        return outBuffer.toString();
+    }
+}

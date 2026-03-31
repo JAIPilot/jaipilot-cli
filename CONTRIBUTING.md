@@ -14,7 +14,7 @@ Clone the repo and run:
 ./mvnw -B verify
 ```
 
-This runs the unit tests, integration tests, packaging, and the distribution checks used in CI.
+This runs the unit tests, integration tests, packaging, and the install smoke test used in CI.
 
 ## Common Commands
 
@@ -24,16 +24,10 @@ Build and test:
 ./mvnw -B verify
 ```
 
-Smoke-test the packaged archives:
+Smoke-test the install script:
 
 ```sh
-./scripts/smoke-test-distributions.sh
-```
-
-Install the CLI locally:
-
-```sh
-./scripts/install-global.sh
+./scripts/smoke-test-install.sh
 ```
 
 ## Pull Request Guidelines

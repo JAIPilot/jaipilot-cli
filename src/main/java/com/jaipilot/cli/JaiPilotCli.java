@@ -1,5 +1,10 @@
 package com.jaipilot.cli;
 
+import com.jaipilot.cli.commands.FixCommand;
+import com.jaipilot.cli.commands.GenerateCommand;
+import com.jaipilot.cli.commands.LoginCommand;
+import com.jaipilot.cli.commands.LogoutCommand;
+import com.jaipilot.cli.commands.StatusCommand;
 import com.jaipilot.cli.commands.VerifyCommand;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
@@ -11,8 +16,13 @@ import picocli.CommandLine.Model.CommandSpec;
         name = "jaipilot",
         mixinStandardHelpOptions = true,
         versionProvider = JaiPilotVersionProvider.class,
-        description = "Runs JAIPilot verification workflows against Maven projects.",
+        description = "Runs JAIPilot verification workflows and backend-assisted JUnit generation.",
         subcommands = {
+            LoginCommand.class,
+            LogoutCommand.class,
+            StatusCommand.class,
+            GenerateCommand.class,
+            FixCommand.class,
             VerifyCommand.class
         }
 )

@@ -37,4 +37,34 @@ class MavenCommandBuilderTest {
         assertTrue(command.contains("org.jacoco:jacoco-maven-plugin:0.8.13:report-aggregate"));
         assertTrue(command.contains("org.pitest:pitest-maven:1.22.0:mutationCoverage"));
     }
+
+    @Test
+    void buildsTestCompileCommand() {
+        List<String> command = commandBuilder.buildTestCompile(
+                Path.of("/tmp/project"),
+                Path.of("custom-mvn"),
+                List.of("-DskipITs")
+        );
+
+        assertEquals("custom-mvn", command.get(0));
+        assertTrue(command.contains("-DskipITs"));
+        assertTrue(command.contains("-DskipTests"));
+        assertTrue(command.contains("test-compile"));
+    }
+
+    @Test
+    void buildsSingleTestExecutionCommand() {
+        List<String> command = commandBuilder.buildSingleTestExecution(
+                Path.of("/tmp/project"),
+                Path.of("custom-mvn"),
+                List.of("-DskipITs"),
+                "com.example.CrashControllerTest"
+        );
+
+        assertEquals("custom-mvn", command.get(0));
+        assertTrue(command.contains("-DskipITs"));
+        assertTrue(command.contains("-Dtest=com.example.CrashControllerTest"));
+        assertTrue(command.contains("-Dsurefire.failIfNoSpecifiedTests=false"));
+        assertTrue(command.contains("test"));
+    }
 }
