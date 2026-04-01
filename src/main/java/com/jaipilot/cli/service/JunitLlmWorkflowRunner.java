@@ -578,8 +578,13 @@ public final class JunitLlmWorkflowRunner {
             builder.append("Details:").append(System.lineSeparator());
             builder.append(failure.details()).append(System.lineSeparator());
         }
-        builder.append("Output:").append(System.lineSeparator());
-        builder.append(SensitiveDataRedactor.redact(failure.result().output()));
+        String outputExcerpt = SensitiveDataRedactor.redactBuildOutput(failure.result().output());
+        builder.append("Output excerpt:").append(System.lineSeparator());
+        if (outputExcerpt == null || outputExcerpt.isBlank()) {
+            builder.append("no build output was captured");
+        } else {
+            builder.append(outputExcerpt);
+        }
         return builder.toString();
     }
 

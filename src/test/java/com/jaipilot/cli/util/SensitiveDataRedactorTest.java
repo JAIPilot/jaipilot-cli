@@ -41,4 +41,28 @@ class SensitiveDataRedactorTest {
 
         assertEquals("./mvnw -Drepo.password=[REDACTED] --jwt-token [REDACTED]", redacted);
     }
+
+    @Test
+    void redactBuildOutputKeepsFailureSignalAndTrimsStackTraceNoise() {
+        String output = """
+                [ERROR] Tests run: 1, Failures: 1
+                org.opentest4j.AssertionFailedError: expected: <200> but was: <500>
+                \tat org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+                \tat org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+                \tat com.example.CrashControllerTest.shouldReturnOk(CrashControllerTest.java:42)
+                \t... 23 more
+                Caused by: java.lang.IllegalStateException: boom
+                \tat com.example.CrashController.handle(CrashController.java:17)
+                """;
+
+        String redacted = SensitiveDataRedactor.redactBuildOutput(output);
+
+        assertTrue(redacted.contains("Tests run: 1, Failures: 1"));
+        assertTrue(redacted.contains("AssertionFailedError: expected: <200> but was: <500>"));
+        assertTrue(redacted.contains("Caused by: java.lang.IllegalStateException: boom"));
+        assertTrue(redacted.contains("[stack trace trimmed:"));
+        assertFalse(redacted.contains("AssertionFailureBuilder.build("));
+        assertFalse(redacted.contains("CrashControllerTest.shouldReturnOk"));
+        assertFalse(redacted.contains("... 23 more"));
+    }
 }

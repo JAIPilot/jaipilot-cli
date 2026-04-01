@@ -88,9 +88,11 @@ class JunitLlmWorkflowRunnerTest {
         assertTrue(firstFixRequest.clientLogs().contains("-Drepo.password=[REDACTED]"));
         assertTrue(firstFixRequest.clientLogs().contains("Authorization: Bearer [REDACTED]"));
         assertTrue(firstFixRequest.clientLogs().contains("refresh_token=[REDACTED]"));
-        assertTrue(firstFixRequest.clientLogs().contains("JAIPILOT_JWT_TOKEN=[REDACTED]"));
+        assertTrue(firstFixRequest.clientLogs().contains("[stack trace trimmed:"));
         assertFalse(firstFixRequest.clientLogs().contains("hunter2"));
         assertFalse(firstFixRequest.clientLogs().contains("compile-secret-token"));
+        assertFalse(firstFixRequest.clientLogs().contains("jwt-compile-token"));
+        assertFalse(firstFixRequest.clientLogs().contains("com.example.Compiler.internal"));
         assertEquals("", secondFixRequest.cutName());
         assertEquals("", secondFixRequest.cutCode());
         assertTrue(secondFixRequest.clientLogs().contains("Phase: test"));
@@ -98,7 +100,9 @@ class JunitLlmWorkflowRunnerTest {
         assertEquals("", secondFixRequest.newTestClassCode());
         assertTrue(secondFixRequest.clientLogs().contains("Authorization: Bearer [REDACTED]"));
         assertTrue(secondFixRequest.clientLogs().contains("refresh_token=[REDACTED]"));
-        assertTrue(secondFixRequest.clientLogs().contains("JAIPILOT_JWT_TOKEN=[REDACTED]"));
+        assertTrue(secondFixRequest.clientLogs().contains("[stack trace trimmed:"));
+        assertFalse(secondFixRequest.clientLogs().contains("jwt-test-token"));
+        assertFalse(secondFixRequest.clientLogs().contains("org.junit.jupiter.engine.execution"));
 
         List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
         assertEquals(6, commandLog.size());
@@ -391,6 +395,10 @@ class JunitLlmWorkflowRunnerTest {
                       echo "Authorization: Bearer compile-secret-token"
                       echo "refresh_token=refresh-compile-token"
                       echo "JAIPILOT_JWT_TOKEN=jwt-compile-token"
+                      echo "java.lang.IllegalStateException: compiler blew up"
+                      echo "    at com.example.Compiler.internal(Compiler.java:41)"
+                      echo "    at org.apache.maven.plugin.TestCompileMojo.execute(TestCompileMojo.java:99)"
+                      echo "    ... 18 more"
                       exit 1
                     fi
                     echo "compile ok"
@@ -462,6 +470,10 @@ class JunitLlmWorkflowRunnerTest {
                       echo "Authorization: Bearer test-secret-token"
                       echo "refresh_token=refresh-test-token"
                       echo "JAIPILOT_JWT_TOKEN=jwt-test-token"
+                      echo "org.opentest4j.AssertionFailedError: expected: <200> but was: <500>"
+                      echo "    at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)"
+                      echo "    at com.example.CrashControllerTest.shouldReturnOk(CrashControllerTest.java:42)"
+                      echo "    ... 12 more"
                       exit 1
                     fi
                     echo "Tests run: 1, Failures: 0"
@@ -495,6 +507,10 @@ class JunitLlmWorkflowRunnerTest {
                       echo "Authorization: Bearer compile-secret-token"
                       echo "refresh_token=refresh-compile-token"
                       echo "JAIPILOT_JWT_TOKEN=jwt-compile-token"
+                      echo "java.lang.IllegalStateException: gradle compile blew up"
+                      echo "    at com.example.Compiler.internal(Compiler.java:41)"
+                      echo "    at org.gradle.api.internal.tasks.compile.NormalizingJavaCompiler.execute(NormalizingJavaCompiler.java:88)"
+                      echo "    ... 18 more"
                       exit 1
                     fi
                     echo "compile ok"
@@ -506,6 +522,10 @@ class JunitLlmWorkflowRunnerTest {
                       echo "Authorization: Bearer test-secret-token"
                       echo "refresh_token=refresh-test-token"
                       echo "JAIPILOT_JWT_TOKEN=jwt-test-token"
+                      echo "org.opentest4j.AssertionFailedError: expected: <200> but was: <500>"
+                      echo "    at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)"
+                      echo "    at com.example.CrashControllerTest.shouldReturnOk(CrashControllerTest.java:42)"
+                      echo "    ... 12 more"
                       exit 1
                     fi
                     echo "Tests run: 1, Failures: 0"
