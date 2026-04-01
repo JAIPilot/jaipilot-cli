@@ -158,6 +158,7 @@ Authentication commands:
 - `jaipilot login` starts the browser flow and stores credentials in `~/.config/jaipilot/credentials.json` with owner-only filesystem permissions when the OS supports them.
 - `jaipilot status` shows the current signed-in user and refreshes the access token if needed.
 - `jaipilot logout` clears the stored session.
+- `jaipilot doctor` checks the bundled runtime, trust configuration, proxy mode, and connectivity to `jaipilot.com` plus the backend.
 
 Common options:
 
@@ -209,6 +210,26 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and pull request ex
 ## Security
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting guidance.
+
+## Enterprise SSL / Proxy
+
+JAIPilot ships with a bundled Java runtime, but some corporate networks still intercept TLS or require an explicit proxy. If you hit a certificate or PKIX-style error, run:
+
+```sh
+jaipilot doctor
+```
+
+JAIPilot supports these network overrides:
+
+- `JAIPILOT_TRUST_STORE=/path/to/truststore.p12`
+- `JAIPILOT_TRUST_STORE_PASSWORD=changeit`
+- `JAIPILOT_TRUST_STORE_TYPE=PKCS12`
+- `JAIPILOT_USE_SYSTEM_CA=true`
+- `HTTPS_PROXY=http://proxy.example.com:8080`
+- `HTTP_PROXY=http://proxy.example.com:8080`
+- `NO_PROXY=127.0.0.1,localhost,.internal.example.com`
+
+On Windows and macOS, `JAIPILOT_USE_SYSTEM_CA=true` lets JAIPilot try the native OS root store when the bundled runtime supports it. For locked-down enterprise environments, the most reliable option is usually a dedicated trust store that contains your company root CA.
 
 ## License
 

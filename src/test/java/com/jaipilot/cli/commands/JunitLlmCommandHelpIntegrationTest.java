@@ -70,6 +70,19 @@ class JunitLlmCommandHelpIntegrationTest {
         assertFalse(helpOutput.contains("--verbose"));
     }
 
+    @Test
+    void rootHelpListsDoctorCommand() {
+        StringWriter outBuffer = new StringWriter();
+        CommandLine commandLine = new CommandLine(new JaiPilotCli())
+                .setOut(new PrintWriter(outBuffer, true))
+                .setErr(new PrintWriter(new StringWriter(), true));
+
+        int exitCode = commandLine.execute("--help");
+
+        assertEquals(0, exitCode);
+        assertTrue(outBuffer.toString().contains("doctor"));
+    }
+
     private String executeHelp(String command) {
         StringWriter outBuffer = new StringWriter();
         CommandLine commandLine = new CommandLine(new JaiPilotCli())

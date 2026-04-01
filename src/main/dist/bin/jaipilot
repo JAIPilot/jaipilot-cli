@@ -3,9 +3,23 @@ set -eu
 
 BASE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 RUNTIME_JAVA="$BASE_DIR/runtime/bin/java"
+SYSTEM_PROXY_FLAG="-Djava.net.useSystemProxies=true"
+
+case "${JAVA_TOOL_OPTIONS-} ${JDK_JAVA_OPTIONS-}" in
+  *-Djava.net.useSystemProxies=*)
+    SYSTEM_PROXY_FLAG=""
+    ;;
+esac
 
 if [ -x "$RUNTIME_JAVA" ]; then
+  if [ -n "$SYSTEM_PROXY_FLAG" ]; then
+    exec "$RUNTIME_JAVA" "$SYSTEM_PROXY_FLAG" -jar "$BASE_DIR/lib/jaipilot.jar" "$@"
+  fi
   exec "$RUNTIME_JAVA" -jar "$BASE_DIR/lib/jaipilot.jar" "$@"
+fi
+
+if [ -n "$SYSTEM_PROXY_FLAG" ]; then
+  exec java "$SYSTEM_PROXY_FLAG" -jar "$BASE_DIR/lib/jaipilot.jar" "$@"
 fi
 
 exec java -jar "$BASE_DIR/lib/jaipilot.jar" "$@"

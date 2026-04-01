@@ -4,11 +4,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.jaipilot.cli.http.JaipilotHttpClientDiagnostics;
+import com.jaipilot.cli.http.JaipilotHttpClientFactory;
+import com.jaipilot.cli.http.JaipilotNetworkErrors;
 import com.jaipilot.cli.model.FetchJobResponse;
 import com.jaipilot.cli.model.InvokeJunitLlmRequest;
 import com.jaipilot.cli.model.InvokeJunitLlmResponse;
 import java.io.IOException;
-import java.io.PrintWriter;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -24,16 +26,30 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
     private static final String FETCH_JOB_PATH = "/functions/v1/fetch-job-cli?id=";
 
     private final HttpClient httpClient;
+    private final JaipilotHttpClientDiagnostics httpClientDiagnostics;
     private final ObjectMapper objectMapper;
     private final String backendUrl;
     private final String jwtToken;
 
     public HttpJunitLlmBackendClient(String backendUrl, String jwtToken) {
         this(
-                HttpClient.newBuilder()
-                        .connectTimeout(Duration.ofSeconds(20))
-                        .build(),
+                new JaipilotHttpClientFactory(),
                 OBJECT_MAPPER,
+                backendUrl,
+                jwtToken
+        );
+    }
+
+    HttpJunitLlmBackendClient(
+            JaipilotHttpClientFactory httpClientFactory,
+            ObjectMapper objectMapper,
+            String backendUrl,
+            String jwtToken
+    ) {
+        this(
+                httpClientFactory.create(Duration.ofSeconds(20)),
+                httpClientFactory.diagnostics(),
+                objectMapper,
                 backendUrl,
                 jwtToken
         );
@@ -45,6 +61,16 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
             String backendUrl,
             String jwtToken
     ) {
+        this(httpClient, JaipilotHttpClientDiagnostics.defaults(), objectMapper, backendUrl, jwtToken);
+    }
+
+    HttpJunitLlmBackendClient(
+            HttpClient httpClient,
+            JaipilotHttpClientDiagnostics httpClientDiagnostics,
+            ObjectMapper objectMapper,
+            String backendUrl,
+            String jwtToken
+    ) {
         if (backendUrl == null || backendUrl.isBlank()) {
             throw new IllegalArgumentException("backendUrl is required");
         }
@@ -52,6 +78,9 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
             throw new IllegalArgumentException("jwtToken is required");
         }
         this.httpClient = httpClient;
+        this.httpClientDiagnostics = httpClientDiagnostics == null
+                ? JaipilotHttpClientDiagnostics.defaults()
+                : httpClientDiagnostics;
         this.objectMapper = objectMapper;
         this.backendUrl = trimTrailingSlash(backendUrl);
         this.jwtToken = jwtToken.trim();
@@ -67,10 +96,20 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
                 .build();
-        HttpResponse<String> response = httpClient.send(
-                httpRequest,
-                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-        );
+        HttpResponse<String> response;
+        try {
+            response = httpClient.send(
+                    httpRequest,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+            );
+        } catch (IOException exception) {
+            throw JaipilotNetworkErrors.wrapIo(
+                    "invoke the JAIPilot backend",
+                    URI.create(url),
+                    exception,
+                    httpClientDiagnostics
+            );
+        }
         ensureSuccessful(response);
         return objectMapper.readValue(response.body(), InvokeJunitLlmResponse.class);
     }
@@ -83,10 +122,20 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
                 .timeout(Duration.ofSeconds(30))
                 .GET()
                 .build();
-        HttpResponse<String> response = httpClient.send(
-                httpRequest,
-                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-        );
+        HttpResponse<String> response;
+        try {
+            response = httpClient.send(
+                    httpRequest,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+            );
+        } catch (IOException exception) {
+            throw JaipilotNetworkErrors.wrapIo(
+                    "poll the JAIPilot backend",
+                    URI.create(url),
+                    exception,
+                    httpClientDiagnostics
+            );
+        }
         ensureSuccessful(response);
         return parseFetchJobResponse(response.body());
     }

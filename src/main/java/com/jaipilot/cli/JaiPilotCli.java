@@ -1,5 +1,6 @@
 package com.jaipilot.cli;
 
+import com.jaipilot.cli.commands.DoctorCommand;
 import com.jaipilot.cli.commands.FixCommand;
 import com.jaipilot.cli.commands.GenerateCommand;
 import com.jaipilot.cli.commands.LoginCommand;
@@ -21,6 +22,7 @@ import picocli.CommandLine.Model.CommandSpec;
             LoginCommand.class,
             LogoutCommand.class,
             StatusCommand.class,
+            DoctorCommand.class,
             GenerateCommand.class,
             FixCommand.class,
             VerifyCommand.class

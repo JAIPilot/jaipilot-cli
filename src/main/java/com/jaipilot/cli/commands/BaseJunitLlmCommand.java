@@ -1,5 +1,6 @@
 package com.jaipilot.cli.commands;
 
+import com.jaipilot.cli.JaipilotEndpointConfig;
 import com.jaipilot.cli.auth.AuthService;
 import com.jaipilot.cli.auth.CredentialsStore;
 import com.jaipilot.cli.backend.HttpJunitLlmBackendClient;
@@ -29,8 +30,6 @@ import picocli.CommandLine.Option;
 import picocli.CommandLine.Spec;
 
 abstract class BaseJunitLlmCommand implements Callable<Integer> {
-
-    static final String DEFAULT_BACKEND_URL = "https://otxfylhjrlaesjagfhfi.supabase.co";
 
     @Option(
             names = "--output",
@@ -117,7 +116,7 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
                     : "";
 
             JunitLlmBackendClient backendClient = new HttpJunitLlmBackendClient(
-                    DEFAULT_BACKEND_URL,
+                    JaipilotEndpointConfig.resolveBackendUrl(),
                     resolveJwtToken()
             );
             JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(

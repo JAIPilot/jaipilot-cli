@@ -42,7 +42,14 @@ public final class StatusCommand implements Callable<Integer> {
             return CommandLine.ExitCode.OK;
         }
 
-        String accessToken = authService.ensureFreshAccessToken();
+        String accessToken;
+        try {
+            accessToken = authService.ensureFreshAccessToken();
+        } catch (IllegalStateException exception) {
+            out.println(exception.getMessage());
+            out.flush();
+            return CommandLine.ExitCode.SOFTWARE;
+        }
         if (accessToken == null || accessToken.isBlank()) {
             out.println("Stored credentials are expired or invalid. Run `jaipilot login` again.");
             out.flush();

@@ -2,6 +2,10 @@ package com.jaipilot.cli.auth;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jaipilot.cli.JaipilotEndpointConfig;
+import com.jaipilot.cli.http.JaipilotHttpClientDiagnostics;
+import com.jaipilot.cli.http.JaipilotHttpClientFactory;
+import com.jaipilot.cli.http.JaipilotNetworkErrors;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.awt.Desktop;
@@ -86,21 +90,41 @@ public final class AuthService {
 
     private final CredentialsStore credentialsStore;
     private final HttpClient httpClient;
+    private final JaipilotHttpClientDiagnostics httpClientDiagnostics;
     private final String websiteBase;
 
     public AuthService(CredentialsStore credentialsStore) {
         this(
                 credentialsStore,
-                HttpClient.newBuilder()
-                        .connectTimeout(Duration.ofSeconds(20))
-                        .build(),
-                resolveWebsiteBase()
+                new JaipilotHttpClientFactory(),
+                JaipilotEndpointConfig.resolveWebsiteBase()
+        );
+    }
+
+    AuthService(CredentialsStore credentialsStore, JaipilotHttpClientFactory httpClientFactory, String websiteBase) {
+        this(
+                credentialsStore,
+                httpClientFactory.create(Duration.ofSeconds(20)),
+                httpClientFactory.diagnostics(),
+                websiteBase
         );
     }
 
     AuthService(CredentialsStore credentialsStore, HttpClient httpClient, String websiteBase) {
+        this(credentialsStore, httpClient, JaipilotHttpClientDiagnostics.defaults(), websiteBase);
+    }
+
+    AuthService(
+            CredentialsStore credentialsStore,
+            HttpClient httpClient,
+            JaipilotHttpClientDiagnostics httpClientDiagnostics,
+            String websiteBase
+    ) {
         this.credentialsStore = credentialsStore;
         this.httpClient = httpClient;
+        this.httpClientDiagnostics = httpClientDiagnostics == null
+                ? JaipilotHttpClientDiagnostics.defaults()
+                : httpClientDiagnostics;
         this.websiteBase = trimTrailingSlash(websiteBase);
     }
 
@@ -265,10 +289,20 @@ public final class AuthService {
                     .header("Content-Type", JSON_CONTENT_TYPE)
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8))
                     .build();
-            HttpResponse<String> response = httpClient.send(
-                    request,
-                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-            );
+            HttpResponse<String> response;
+            try {
+                response = httpClient.send(
+                        request,
+                        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+                );
+            } catch (IOException exception) {
+                throw JaipilotNetworkErrors.wrapRuntime(
+                        "refresh the JAIPilot login session",
+                        URI.create(websiteBase + REFRESH_PATH),
+                        exception,
+                        httpClientDiagnostics
+                );
+            }
             if (response.statusCode() / 100 != 2) {
                 return null;
             }
@@ -286,6 +320,7 @@ public final class AuthService {
         } catch (IOException | InterruptedException exception) {
             if (exception instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
+                throw new IllegalStateException("JAIPilot token refresh was interrupted.", exception);
             }
             return null;
         }
@@ -582,17 +617,6 @@ public final class AuthService {
                 .replace(">", "&gt;")
                 .replace("\"", "&quot;")
                 .replace("'", "&#39;");
-    }
-
-    private static String resolveWebsiteBase() {
-        String override = System.getenv("JAIPILOT_WEBSITE_BASE");
-        if (override == null || override.isBlank()) {
-            override = System.getProperty("jaipilot.website.base");
-        }
-        if (override != null && !override.isBlank()) {
-            return override;
-        }
-        return "https://www.jaipilot.com";
     }
 
     private static String trimTrailingSlash(String value) {

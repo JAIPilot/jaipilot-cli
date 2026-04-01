@@ -33,6 +33,7 @@
         <maven.compiler.release>17</maven.compiler.release>
         <picocli.version>4.7.7</picocli.version>
         <javaparser.version>3.27.1</javaparser.version>
+        <bouncycastle.version>1.78.1</bouncycastle.version>
         <junit.version>5.11.4</junit.version>
         <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
         <maven.surefire.plugin.version>3.5.2</maven.surefire.plugin.version>
@@ -65,6 +66,13 @@
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>${bouncycastle.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
