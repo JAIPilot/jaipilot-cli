@@ -67,6 +67,7 @@ class UpdateServiceTest {
 
         assertFalse(result.changed());
         assertFalse(result.migratedLegacyLayout());
+        assertEquals("0.1.2", result.previousVersion());
         assertEquals("0.1.2", result.installedVersion());
     }
 

@@ -93,9 +93,21 @@ resolve_latest_version() {
   strip_v "$version"
 }
 
+resolve_version_from_archive_url() {
+  [ -n "$ARCHIVE_URL" ] || return 1
+  archive_name=$(printf '%s\n' "$ARCHIVE_URL" | sed 's#^.*\/##; s/[?#].*$//')
+  version=$(printf '%s\n' "$archive_name" | sed -n 's/^jaipilot-\([0-9][0-9.]*\)-.*\.tar\.gz$/\1/p')
+  [ -n "$version" ] || return 1
+  printf '%s\n' "$version"
+}
+
 resolve_version() {
   if [ -n "$VERSION" ]; then
     printf '%s\n' "$VERSION"
+    return
+  fi
+  if version=$(resolve_version_from_archive_url); then
+    printf '%s\n' "$version"
     return
   fi
   resolve_latest_version

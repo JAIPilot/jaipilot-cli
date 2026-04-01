@@ -96,6 +96,8 @@ fi
 [ -n "${TAR_GZ:-}" ] || die "Could not find a JAIPilot tar.gz distribution under $DIST_DIR"
 [ -f "$TAR_GZ" ] || die "Missing distribution archive: $TAR_GZ"
 CHECKSUM_FILE="$TAR_GZ.sha256"
+INSTALL_VERSION=${VERSION:-$(basename "$TAR_GZ" | sed -n "s/^jaipilot-\\([0-9][0-9.]*\\)-$RESOLVED_CLASSIFIER\\.tar\\.gz$/\\1/p")}
+[ -n "${INSTALL_VERSION:-}" ] || die "Could not determine the distribution version from $TAR_GZ"
 
 printf '%s  %s\n' "$(compute_sha256 "$TAR_GZ")" "$(basename "$TAR_GZ")" > "$CHECKSUM_FILE"
 
@@ -103,6 +105,7 @@ rm -rf "$SMOKE_DIR"
 mkdir -p "$SMOKE_DIR"
 
 "$REPO_ROOT/install.sh" \
+  --version "$INSTALL_VERSION" \
   --archive-url "file://$TAR_GZ" \
   --checksum-url "file://$CHECKSUM_FILE" \
   --bin-dir "$SMOKE_DIR/bin" \

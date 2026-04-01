@@ -114,7 +114,7 @@ public final class UpdateService {
                         "Self-update is only available for JAIPilot installs managed by the installer."
                 ));
 
-        String currentVersion = VersionComparator.normalize(JaiPilotVersionProvider.resolveVersion());
+        String currentVersion = resolveInstalledVersion(installation);
         String targetVersion = VersionComparator.normalize(version);
 
         if (!installation.legacyLayout() && VersionComparator.compare(currentVersion, targetVersion) == 0) {
@@ -184,6 +184,16 @@ public final class UpdateService {
         } finally {
             deleteRecursively(tempDir);
         }
+    }
+
+    private String resolveInstalledVersion(InstallationLayout installation) {
+        if (installation != null && !installation.legacyLayout()) {
+            Path payloadDir = installation.activePayloadDir();
+            if (payloadDir != null && payloadDir.getFileName() != null) {
+                return VersionComparator.normalize(payloadDir.getFileName().toString());
+            }
+        }
+        return VersionComparator.normalize(JaiPilotVersionProvider.resolveVersion());
     }
 
     private String resolvePlatform() {
