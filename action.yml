@@ -1,0 +1,131 @@
+name: "JAIPilot PR Test Action"
+description: "Run JAIPilot on pull requests, execute verification, and optionally send results to an API."
+author: "JAIPilot"
+branding:
+  icon: "check-circle"
+  color: "green"
+
+inputs:
+  working-directory:
+    description: "Directory where JAIPilot should run."
+    required: false
+    default: "."
+  java-version:
+    description: "Temurin Java version to install."
+    required: false
+    default: "21"
+  install-script-url:
+    description: "Installer script URL for JAIPilot."
+    required: false
+    default: "https://jaipilot.com/install.sh"
+  jaipilot-command:
+    description: "JAIPilot command to run (for example: verify, generate, fix)."
+    required: false
+    default: "verify"
+  jaipilot-args:
+    description: "Space-separated additional arguments passed to JAIPilot."
+    required: false
+    default: ""
+  jaipilot-jwt-token:
+    description: "Optional JAIPILOT_JWT_TOKEN for backend-assisted commands."
+    required: false
+    default: ""
+  fail-on-error:
+    description: "If true, fail the workflow when JAIPilot exits non-zero."
+    required: false
+    default: "true"
+  api-callback-url:
+    description: "Optional callback URL to receive a result payload."
+    required: false
+    default: ""
+  api-callback-method:
+    description: "HTTP method for callback request."
+    required: false
+    default: "POST"
+  api-callback-token:
+    description: "Optional bearer token for callback request."
+    required: false
+    default: ""
+  api-callback-body:
+    description: "JSON request body sent to callback endpoint."
+    required: false
+    default: "{}"
+
+outputs:
+  exit-code:
+    description: "JAIPilot process exit code."
+    value: ${{ steps.run-jaipilot.outputs.exit-code }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: "temurin"
+        java-version: ${{ inputs.java-version }}
+
+    - name: Install JAIPilot
+      shell: bash
+      run: |
+        set -euo pipefail
+        curl -fsSL "${{ inputs.install-script-url }}" | bash
+        echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+
+    - name: Run JAIPilot
+      id: run-jaipilot
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        workdir="${{ inputs.working-directory }}"
+        if [ ! -d "$workdir" ]; then
+          echo "Working directory does not exist: $workdir" >&2
+          exit 1
+        fi
+        cd "$workdir"
+
+        if [ -n "${{ inputs.jaipilot-jwt-token }}" ]; then
+          export JAIPILOT_JWT_TOKEN="${{ inputs.jaipilot-jwt-token }}"
+        fi
+
+        command_name="${{ inputs.jaipilot-command }}"
+        args_raw="${{ inputs.jaipilot-args }}"
+
+        set +e
+        if [ -n "$args_raw" ]; then
+          read -r -a args <<< "$args_raw"
+          jaipilot "$command_name" "${args[@]}"
+        else
+          jaipilot "$command_name"
+        fi
+        exit_code=$?
+        set -e
+
+        echo "exit-code=$exit_code" >> "${GITHUB_OUTPUT}"
+
+        if [ "$exit_code" -ne 0 ] && [ "${{ inputs.fail-on-error }}" = "true" ]; then
+          exit "$exit_code"
+        fi
+
+    - name: Send optional callback
+      if: ${{ inputs.api-callback-url != '' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        callback_url="${{ inputs.api-callback-url }}"
+        callback_method="${{ inputs.api-callback-method }}"
+        callback_body="${{ inputs.api-callback-body }}"
+        callback_token="${{ inputs.api-callback-token }}"
+
+        auth_header=()
+        if [ -n "$callback_token" ]; then
+          auth_header=(-H "Authorization: Bearer $callback_token")
+        fi
+
+        curl -fsS -X "$callback_method" \
+          -H "Content-Type: application/json" \
+          "${auth_header[@]}" \
+          --data "$callback_body" \
+          "$callback_url"

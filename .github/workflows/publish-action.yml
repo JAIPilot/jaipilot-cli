@@ -1,0 +1,79 @@
+name: Publish Action
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semantic version without prefix (example: 1.0.0)"
+        required: true
+      update_major_tag:
+        description: "Also update moving major tag (action-v1, action-v2, ...)"
+        required: false
+        default: "true"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate version and compute tags
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${{ inputs.version }}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version '$version'. Use semantic version format x.y.z." >&2
+            exit 1
+          fi
+
+          full_tag="action-v${version}"
+          major_tag="action-v${version%%.*}"
+
+          if git rev-parse "$full_tag" >/dev/null 2>&1; then
+            echo "Tag already exists: $full_tag" >&2
+            exit 1
+          fi
+
+          echo "full_tag=$full_tag" >> "$GITHUB_OUTPUT"
+          echo "major_tag=$major_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Configure git user
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create immutable release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag -a "${{ steps.vars.outputs.full_tag }}" -m "Action release ${{ steps.vars.outputs.full_tag }}"
+          git push origin "${{ steps.vars.outputs.full_tag }}"
+
+      - name: Update major moving tag
+        if: ${{ inputs.update_major_tag == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag -fa "${{ steps.vars.outputs.major_tag }}" -m "Action major tag -> ${{ steps.vars.outputs.full_tag }}"
+          git push origin "${{ steps.vars.outputs.major_tag }}" --force
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.vars.outputs.full_tag }}" \
+            --title "JAIPilot Action ${{ steps.vars.outputs.full_tag }}" \
+            --notes "Release of JAIPilot GitHub Action."
