@@ -16,7 +16,7 @@ Prepares a new JAIPilot release by:
   1. Updating the project version.
   2. Running the full Maven verify build.
   3. Smoke-testing the install script for that version.
-  4. Creating a release commit and annotated git tag.
+  4. Creating a release commit (including current worktree changes) and annotated git tag.
 
 Options:
   --version <version>  Release version such as 0.3.2.
@@ -32,11 +32,6 @@ die() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
-}
-
-ensure_clean_worktree() {
-  git diff --quiet --ignore-submodules HEAD -- || die "Git worktree is not clean."
-  git diff --cached --quiet --ignore-submodules -- || die "Git index has staged changes."
 }
 
 validate_version() {
@@ -72,7 +67,8 @@ ensure_tag_absent() {
 
 commit_and_tag() {
   version=$1
-  git add "$POM_FILE" "$VERSION_PROVIDER_FILE"
+  git add -A
+  git diff --cached --quiet --ignore-submodules -- && die "No changes to commit for release $version."
   git commit -m "Release $version"
   git tag -a "v$version" -m "Release $version"
 }
@@ -107,17 +103,17 @@ require_command grep
 validate_version "$VERSION"
 
 cd "$REPO_ROOT"
-ensure_clean_worktree
 [ "$(current_branch)" = "main" ] || die "Release script must be run from the main branch."
 
 CURRENT_VERSION=$(current_version)
 [ -n "$CURRENT_VERSION" ] || die "Could not determine the current project version."
-[ "$CURRENT_VERSION" != "$VERSION" ] || die "Project is already at version $VERSION"
 
 ensure_tag_absent "v$VERSION"
 
-update_versions "$VERSION"
-ensure_version_applied "$VERSION"
+if [ "$CURRENT_VERSION" != "$VERSION" ] || ! grep -Fq "version = \"$VERSION\";" "$VERSION_PROVIDER_FILE"; then
+  update_versions "$VERSION"
+  ensure_version_applied "$VERSION"
+fi
 
 ./mvnw -B verify
 ./scripts/smoke-test-install.sh --version "$VERSION"
