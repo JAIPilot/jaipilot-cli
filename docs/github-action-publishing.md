@@ -1,11 +1,11 @@
-# JAIPilot GitHub Action: Create and Publish
+# JAIPilot GitHub Action: Generate and Publish
 
 This repository now includes a publishable root Action in [`action.yml`](../action.yml).
 
 ## Use the action in a workflow
 
 ```yaml
-name: JAIPilot PR Check
+name: JAIPilot Generate Tests
 
 on:
   pull_request:
@@ -15,19 +15,28 @@ jobs:
   jaipilot:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       pull-requests: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Needed so the action can commit to the PR branch.
+          ref: ${{ github.head_ref }}
 
-      - name: Run JAIPilot
+      - name: Run JAIPilot generate for all non-test Java classes
         uses: <OWNER>/<REPO>@action-v1
         with:
-          jaipilot-command: verify
-          jaipilot-jwt-token: ${{ secrets.JAIPILOT_JWT_TOKEN }}
+          jaipilot-license-key: ${{ secrets.JAIPILOT_LICENSE_KEY }}
 ```
+
+The action automatically:
+
+- finds all `.java` files excluding test classes (`*Test.java`, `*Tests.java`, `*IT.java`, `*ITCase.java`) and files under `src/test`
+- runs `jaipilot generate` for each class
+- commits generated test changes
+- pushes the commit back to the same branch that triggered the workflow
 
 ## Publish a new action release
 

@@ -1,0 +1,33 @@
+name: JAIPilot Generate
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: jaipilot-generate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  generate-tests:
+    # Skip bot-triggered reruns to avoid infinite loops, and skip fork PRs
+    # because this workflow pushes commits back to the source branch.
+    if: ${{ github.actor != 'github-actions[bot]' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Run JAIPilot generate and push changes
+        uses: ./
+        with:
+          jaipilot-license-key: ${{ secrets.JAIPILOT_LICENSE_KEY }}

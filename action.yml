@@ -1,5 +1,5 @@
-name: "JAIPilot PR Test Action"
-description: "Run JAIPilot on pull requests, execute verification, and optionally send results to an API."
+name: "JAIPilot Generate and Commit"
+description: "Run jaipilot generate for all non-test Java classes and commit generated tests back to the same branch."
 author: "JAIPilot"
 branding:
   icon: "check-circle"
@@ -18,43 +18,37 @@ inputs:
     description: "Installer script URL for JAIPilot."
     required: false
     default: "https://jaipilot.com/install.sh"
-  jaipilot-command:
-    description: "JAIPilot command to run (for example: verify, generate, fix)."
-    required: false
-    default: "verify"
-  jaipilot-args:
-    description: "Space-separated additional arguments passed to JAIPilot."
+  jaipilot-license-key:
+    description: "JAIPILOT_LICENSE_KEY used for backend-assisted generate."
     required: false
     default: ""
-  jaipilot-jwt-token:
-    description: "Optional JAIPILOT_JWT_TOKEN for backend-assisted commands."
-    required: false
-    default: ""
-  fail-on-error:
-    description: "If true, fail the workflow when JAIPilot exits non-zero."
+  fail-on-generate-error:
+    description: "If true, fail the workflow when one or more classes fail generation."
     required: false
     default: "true"
-  api-callback-url:
-    description: "Optional callback URL to receive a result payload."
+  commit-message:
+    description: "Commit message used for generated test changes."
     required: false
-    default: ""
-  api-callback-method:
-    description: "HTTP method for callback request."
+    default: "chore: jaipilot generate tests"
+  git-user-name:
+    description: "Git author name used for the generated commit."
     required: false
-    default: "POST"
-  api-callback-token:
-    description: "Optional bearer token for callback request."
+    default: "github-actions[bot]"
+  git-user-email:
+    description: "Git author email used for the generated commit."
     required: false
-    default: ""
-  api-callback-body:
-    description: "JSON request body sent to callback endpoint."
-    required: false
-    default: "{}"
+    default: "41898282+github-actions[bot]@users.noreply.github.com"
 
 outputs:
-  exit-code:
-    description: "JAIPilot process exit code."
-    value: ${{ steps.run-jaipilot.outputs.exit-code }}
+  processed-classes:
+    description: "Number of non-test Java classes processed."
+    value: ${{ steps.generate.outputs.processed-classes }}
+  failed-classes:
+    description: "Number of classes that failed generation."
+    value: ${{ steps.generate.outputs.failed-classes }}
+  commit-sha:
+    description: "Commit SHA pushed by this action. Empty when no changes were committed."
+    value: ${{ steps.commit.outputs.commit-sha }}
 
 runs:
   using: "composite"
@@ -72,8 +66,8 @@ runs:
         curl -fsSL "${{ inputs.install-script-url }}" | bash
         echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
 
-    - name: Run JAIPilot
-      id: run-jaipilot
+    - name: Run jaipilot generate for all non-test Java classes
+      id: generate
       shell: bash
       run: |
         set -euo pipefail
@@ -85,47 +79,97 @@ runs:
         fi
         cd "$workdir"
 
-        if [ -n "${{ inputs.jaipilot-jwt-token }}" ]; then
-          export JAIPILOT_JWT_TOKEN="${{ inputs.jaipilot-jwt-token }}"
+        if [ -n "${{ inputs.jaipilot-license-key }}" ]; then
+          export JAIPILOT_LICENSE_KEY="${{ inputs.jaipilot-license-key }}"
+          # jaipilot generate reads JAIPILOT_JWT_TOKEN today; map license key input to it.
+          export JAIPILOT_JWT_TOKEN="${{ inputs.jaipilot-license-key }}"
+        fi
+        if [ -n "${JAIPILOT_LICENSE_KEY:-}" ] && [ -z "${JAIPILOT_JWT_TOKEN:-}" ]; then
+          # Allow callers to provide JAIPILOT_LICENSE_KEY directly at workflow level.
+          export JAIPILOT_JWT_TOKEN="${JAIPILOT_LICENSE_KEY}"
+        fi
+        if [ -z "${JAIPILOT_JWT_TOKEN:-}" ]; then
+          echo "Missing JAIPILOT_LICENSE_KEY. Set input 'jaipilot-license-key' or JAIPILOT_LICENSE_KEY env var." >&2
+          exit 1
         fi
 
-        command_name="${{ inputs.jaipilot-command }}"
-        args_raw="${{ inputs.jaipilot-args }}"
+        mapfile -t java_files < <(
+          find . -type f -name "*.java" \
+            ! -path "*/src/test/*" \
+            ! -name "*Test.java" \
+            ! -name "*Tests.java" \
+            ! -name "*IT.java" \
+            ! -name "*ITCase.java" \
+            | LC_ALL=C sort
+        )
 
-        set +e
-        if [ -n "$args_raw" ]; then
-          read -r -a args <<< "$args_raw"
-          jaipilot "$command_name" "${args[@]}"
-        else
-          jaipilot "$command_name"
+        if [ "${#java_files[@]}" -eq 0 ]; then
+          echo "No non-test Java classes found."
+          echo "processed-classes=0" >> "${GITHUB_OUTPUT}"
+          echo "failed-classes=0" >> "${GITHUB_OUTPUT}"
+          echo "JAIPILOT_GENERATE_FAILED=0" >> "${GITHUB_ENV}"
+          exit 0
         fi
-        exit_code=$?
-        set -e
 
-        echo "exit-code=$exit_code" >> "${GITHUB_OUTPUT}"
+        processed=0
+        failed=0
 
-        if [ "$exit_code" -ne 0 ] && [ "${{ inputs.fail-on-error }}" = "true" ]; then
-          exit "$exit_code"
-        fi
+        for class_path in "${java_files[@]}"; do
+          processed=$((processed + 1))
+          echo "[$processed/${#java_files[@]}] jaipilot generate $class_path"
+          if ! jaipilot generate "$class_path"; then
+            failed=$((failed + 1))
+            echo "Generation failed for: $class_path" >&2
+          fi
+        done
 
-    - name: Send optional callback
-      if: ${{ inputs.api-callback-url != '' }}
+        echo "processed-classes=$processed" >> "${GITHUB_OUTPUT}"
+        echo "failed-classes=$failed" >> "${GITHUB_OUTPUT}"
+        echo "JAIPILOT_GENERATE_FAILED=$failed" >> "${GITHUB_ENV}"
+
+    - name: Commit and push generated changes
+      id: commit
       shell: bash
       run: |
         set -euo pipefail
 
-        callback_url="${{ inputs.api-callback-url }}"
-        callback_method="${{ inputs.api-callback-method }}"
-        callback_body="${{ inputs.api-callback-body }}"
-        callback_token="${{ inputs.api-callback-token }}"
+        workdir="${{ inputs.working-directory }}"
+        cd "$workdir"
 
-        auth_header=()
-        if [ -n "$callback_token" ]; then
-          auth_header=(-H "Authorization: Bearer $callback_token")
+        if [ -z "$(git status --porcelain)" ]; then
+          echo "No generated changes to commit."
+          echo "commit-sha=" >> "${GITHUB_OUTPUT}"
+          exit 0
         fi
 
-        curl -fsS -X "$callback_method" \
-          -H "Content-Type: application/json" \
-          "${auth_header[@]}" \
-          --data "$callback_body" \
-          "$callback_url"
+        git config user.name "${{ inputs.git-user-name }}"
+        git config user.email "${{ inputs.git-user-email }}"
+
+        git add -A
+        if git diff --cached --quiet; then
+          echo "No staged changes after git add."
+          echo "commit-sha=" >> "${GITHUB_OUTPUT}"
+          exit 0
+        fi
+
+        git commit -m "${{ inputs.commit-message }}"
+
+        target_branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
+        if [ -z "$target_branch" ]; then
+          echo "Unable to detect target branch (GITHUB_HEAD_REF/GITHUB_REF_NAME empty)." >&2
+          exit 1
+        fi
+
+        git push origin "HEAD:${target_branch}"
+        echo "commit-sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+    - name: Fail when generation errors occurred
+      if: ${{ inputs.fail-on-generate-error == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        failed="${JAIPILOT_GENERATE_FAILED:-0}"
+        if [ "$failed" -gt 0 ]; then
+          echo "jaipilot generate failed for $failed classes." >&2
+          exit 1
+        fi
