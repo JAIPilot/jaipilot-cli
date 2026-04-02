@@ -2,6 +2,29 @@
 
 This repository now includes a publishable root Action in [`action.yml`](../action.yml).
 
+## Zero-manual-repo onboarding via GitHub App
+
+If you want install-time onboarding (no per-repo YAML editing), run the GitHub App service in
+[`github-app/README.md`](../github-app/README.md). The app can automatically create/update
+the target repo workflow file on installation events.
+
+## One-command onboarding for another repository
+
+Instead of manually creating workflow YAML in every repository, use:
+
+```bash
+./scripts/onboard-action-repo.sh \
+  --repo <owner/target-repo> \
+  --action-ref action-v1 \
+  --license-key "<JAIPILOT_LICENSE_KEY>"
+```
+
+This command:
+
+- creates or updates `.github/workflows/jaipilot-generate.yml` in the target repo
+- points it to this action release
+- optionally sets `JAIPILOT_LICENSE_KEY` as a repository secret
+
 ## Use the action in a workflow
 
 ```yaml

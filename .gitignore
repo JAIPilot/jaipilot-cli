@@ -5,3 +5,5 @@ target/
 .classpath
 .project
 .settings/
+github-app/node_modules/
+github-app/.env

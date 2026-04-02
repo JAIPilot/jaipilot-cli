@@ -1,0 +1,21 @@
+{
+  "name": "jaipilot-github-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GitHub App that bootstraps and optionally dispatches JAIPilot workflows.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "check": "node --check src/index.js",
+    "test": "node --test src/workflow-template.test.js"
+  },
+  "dependencies": {
+    "@octokit/webhooks": "^13.6.1",
+    "dotenv": "^16.4.5",
+    "octokit": "^4.0.2"
+  }
+}
