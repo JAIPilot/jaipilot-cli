@@ -1,5 +1,6 @@
 package com.jaipilot.cli.auth;
 
+import com.jaipilot.cli.http.CurlHttpClient;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
@@ -53,7 +54,7 @@ class AuthServiceTest {
                 "user@example.com"
         ));
 
-        AuthService authService = new AuthService(credentialsStore, HttpClient.newHttpClient(), "http://127.0.0.1:9");
+        AuthService authService = new AuthService(credentialsStore, new CurlHttpClient(), "http://127.0.0.1:9");
 
         assertEquals("access-token", authService.ensureFreshAccessToken());
     }
@@ -73,7 +74,7 @@ class AuthServiceTest {
 
         AuthService authService = new AuthService(
                 credentialsStore,
-                HttpClient.newHttpClient(),
+                new CurlHttpClient(),
                 "http://127.0.0.1:" + server.getAddress().getPort()
         );
 
@@ -97,7 +98,7 @@ class AuthServiceTest {
 
         AuthService authService = new AuthService(
                 credentialsStore,
-                HttpClient.newHttpClient(),
+                new CurlHttpClient(),
                 "http://127.0.0.1:" + server.getAddress().getPort()
         );
 
@@ -126,7 +127,7 @@ class AuthServiceTest {
 
         AuthService authService = new AuthService(
                 credentialsStore,
-                HttpClient.newHttpClient(),
+                new CurlHttpClient(),
                 "http://127.0.0.1:" + server.getAddress().getPort()
         );
 
@@ -169,7 +170,7 @@ class AuthServiceTest {
     @Test
     void startLoginAcceptsPostedCallbackPayload() throws Exception {
         CredentialsStore credentialsStore = new CredentialsStore(tempDir.resolve("credentials.json"));
-        AuthService authService = new AuthService(credentialsStore, HttpClient.newHttpClient(), "http://127.0.0.1:9");
+        AuthService authService = new AuthService(credentialsStore, new CurlHttpClient(), "http://127.0.0.1:9");
 
         StringWriter outputBuffer = new StringWriter();
         StringWriter errorBuffer = new StringWriter();

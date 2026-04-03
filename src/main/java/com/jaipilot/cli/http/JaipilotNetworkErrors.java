@@ -1,16 +1,8 @@
 package com.jaipilot.cli.http;
 
 import java.io.IOException;
-import java.net.ConnectException;
-import java.net.HttpURLConnection;
 import java.net.URI;
-import java.net.UnknownHostException;
-import java.net.http.HttpTimeoutException;
-import java.security.cert.CertPathBuilderException;
-import java.security.cert.CertificateException;
-import java.util.Locale;
-import javax.net.ssl.SSLException;
-import javax.net.ssl.SSLHandshakeException;
+import java.util.Objects;
 
 public final class JaipilotNetworkErrors {
 
@@ -20,85 +12,65 @@ public final class JaipilotNetworkErrors {
     public static IOException wrapIo(
             String action,
             URI uri,
-            IOException exception,
-            JaipilotHttpClientDiagnostics diagnostics
+            IOException exception
     ) {
-        return new IOException(describe(action, uri, exception, diagnostics), exception);
+        return new IOException(describe(action, uri, exception), exception);
     }
 
     public static IllegalStateException wrapRuntime(
             String action,
             URI uri,
-            Exception exception,
-            JaipilotHttpClientDiagnostics diagnostics
+            Exception exception
     ) {
-        return new IllegalStateException(describe(action, uri, exception, diagnostics), exception);
+        return new IllegalStateException(describe(action, uri, exception), exception);
     }
 
     public static String describe(
             String action,
             URI uri,
-            Throwable failure,
-            JaipilotHttpClientDiagnostics diagnostics
+            Throwable failure
     ) {
         String host = uri == null || uri.getHost() == null ? "the configured endpoint" : uri.getHost();
-        if (isProxyFailure(failure)) {
-            return "JAIPilot could not reach %s while trying to %s because the configured proxy rejected or blocked the connection. "
-                    .formatted(host, action)
-                    + "Proxy mode: " + diagnostics.proxySummary() + ". "
-                    + "Check HTTPS_PROXY/HTTP_PROXY/NO_PROXY or JVM proxy settings and retry.";
+        CurlHttpClient.CurlException curlException = findCause(failure, CurlHttpClient.CurlException.class);
+        if (curlException != null) {
+            return switch (curlException.kind()) {
+                case MISSING_CURL -> "JAIPilot requires `curl` on PATH for network calls. Install curl and retry.";
+                case TIMEOUT -> "JAIPilot timed out while trying to %s against %s via curl."
+                        .formatted(action, host);
+                case EXECUTION -> "JAIPilot could not reach %s while trying to %s via curl. %s"
+                        .formatted(host, action, describeCurlFailure(curlException));
+                case INVALID_RESPONSE -> "JAIPilot received an invalid HTTP response from curl while trying to %s against %s."
+                        .formatted(action, host);
+            };
         }
-        if (isTlsFailure(failure)) {
-            return "JAIPilot could not establish a trusted TLS connection to %s while trying to %s. "
-                    .formatted(host, action)
-                    + "Trust mode: " + diagnostics.trustSummary() + ". "
-                    + "JAIPilot does not override trust settings. Ensure this certificate is trusted by your default JVM/OS trust store, "
-                    + "then retry.";
-        }
-        if (findCause(failure, UnknownHostException.class) != null) {
-            return "JAIPilot could not resolve %s while trying to %s. ".formatted(host, action)
-                    + "Check DNS, network connectivity, or proxy settings. Proxy mode: "
-                    + diagnostics.proxySummary() + ".";
-        }
-        if (findCause(failure, ConnectException.class) != null || findCause(failure, HttpTimeoutException.class) != null) {
-            return "JAIPilot could not reach %s while trying to %s. ".formatted(host, action)
-                    + "Check network connectivity or proxy settings. Proxy mode: "
-                    + diagnostics.proxySummary() + ".";
-        }
-        return "JAIPilot hit a network error while trying to %s against %s. ".formatted(action, host)
-                + "Trust mode: " + diagnostics.trustSummary() + ". "
-                + "Proxy mode: " + diagnostics.proxySummary() + ". "
-                + "Retry with --verbose for additional details.";
+
+        return "JAIPilot hit a network error while trying to %s against %s via curl. %s"
+                .formatted(action, host, plainMessage(failure));
     }
 
-    private static boolean isTlsFailure(Throwable failure) {
-        return findCause(failure, SSLHandshakeException.class) != null
-                || findCause(failure, CertPathBuilderException.class) != null
-                || findCause(failure, CertificateException.class) != null
-                || (findCause(failure, SSLException.class) != null && !isProxyFailure(failure));
-    }
-
-    private static boolean isProxyFailure(Throwable failure) {
-        String message = collectMessages(failure);
-        return message.contains("proxy")
-                || message.contains("tunnel failed")
-                || message.contains("407")
-                || message.contains(String.valueOf(HttpURLConnection.HTTP_PROXY_AUTH));
-    }
-
-    private static String collectMessages(Throwable failure) {
-        StringBuilder value = new StringBuilder();
-        Throwable current = failure;
-        while (current != null) {
-            if (current.getMessage() != null && !current.getMessage().isBlank()) {
-                if (value.length() > 0) {
-                    value.append(' ');
-                }
-                value.append(current.getMessage().toLowerCase(Locale.ROOT));
+    private static String describeCurlFailure(CurlHttpClient.CurlException exception) {
+        StringBuilder builder = new StringBuilder();
+        if (exception.exitCode() != null) {
+            builder.append("curl exit code ").append(exception.exitCode()).append('.');
+        }
+        String stderr = exception.stderr();
+        if (stderr != null && !stderr.isBlank()) {
+            if (builder.length() > 0) {
+                builder.append(' ');
             }
-            current = current.getCause();
+            builder.append(stderr.trim());
         }
-        return value.toString();
+        if (builder.length() == 0) {
+            builder.append(Objects.toString(exception.getMessage(), "curl request failed."));
+        }
+        return builder.toString();
+    }
+
+    private static String plainMessage(Throwable failure) {
+        if (failure == null || failure.getMessage() == null || failure.getMessage().isBlank()) {
+            return "Retry with --verbose for additional details.";
+        }
+        return failure.getMessage();
     }
 
     private static <T extends Throwable> T findCause(Throwable failure, Class<T> type) {

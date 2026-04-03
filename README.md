@@ -154,6 +154,7 @@ For Maven wrapper usage, JAIPilot only uses wrapper scripts when `.mvn/wrapper/m
 ## Requirements
 
 - Java 17+
+- curl
 - A Maven or Gradle project
 - JUnit 4 or JUnit 5 tests
 - Maven available via `./mvnw` or `mvn`, or Gradle available via `./gradlew` or `gradle`
@@ -183,7 +184,8 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting guidance.
 
 ## Proxy
 
-JAIPilot uses the runtime default trust settings and supports standard proxy environment variables:
+JAIPilot performs remote HTTP requests through system `curl`, so proxy/TLS behavior matches your local `curl` configuration.
+Common proxy variables:
 
 - `HTTPS_PROXY=http://proxy.example.com:8080`
 - `HTTP_PROXY=http://proxy.example.com:8080`

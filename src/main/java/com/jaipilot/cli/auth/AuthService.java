@@ -3,8 +3,7 @@ package com.jaipilot.cli.auth;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jaipilot.cli.JaipilotEndpointConfig;
-import com.jaipilot.cli.http.JaipilotHttpClientDiagnostics;
-import com.jaipilot.cli.http.JaipilotHttpClientFactory;
+import com.jaipilot.cli.http.CurlHttpClient;
 import com.jaipilot.cli.http.JaipilotNetworkErrors;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -18,9 +17,6 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -89,42 +85,24 @@ public final class AuthService {
             """;
 
     private final CredentialsStore credentialsStore;
-    private final HttpClient httpClient;
-    private final JaipilotHttpClientDiagnostics httpClientDiagnostics;
+    private final CurlHttpClient curlHttpClient;
     private final String websiteBase;
 
     public AuthService(CredentialsStore credentialsStore) {
         this(
                 credentialsStore,
-                new JaipilotHttpClientFactory(),
+                new CurlHttpClient(),
                 JaipilotEndpointConfig.resolveWebsiteBase()
         );
     }
 
-    AuthService(CredentialsStore credentialsStore, JaipilotHttpClientFactory httpClientFactory, String websiteBase) {
-        this(
-                credentialsStore,
-                httpClientFactory.create(Duration.ofSeconds(20)),
-                httpClientFactory.diagnostics(),
-                websiteBase
-        );
-    }
-
-    AuthService(CredentialsStore credentialsStore, HttpClient httpClient, String websiteBase) {
-        this(credentialsStore, httpClient, JaipilotHttpClientDiagnostics.defaults(), websiteBase);
-    }
-
     AuthService(
             CredentialsStore credentialsStore,
-            HttpClient httpClient,
-            JaipilotHttpClientDiagnostics httpClientDiagnostics,
+            CurlHttpClient curlHttpClient,
             String websiteBase
     ) {
         this.credentialsStore = credentialsStore;
-        this.httpClient = httpClient;
-        this.httpClientDiagnostics = httpClientDiagnostics == null
-                ? JaipilotHttpClientDiagnostics.defaults()
-                : httpClientDiagnostics;
+        this.curlHttpClient = curlHttpClient == null ? new CurlHttpClient() : curlHttpClient;
         this.websiteBase = trimTrailingSlash(websiteBase);
     }
 
@@ -282,25 +260,24 @@ public final class AuthService {
     private TokenInfo refresh(TokenInfo tokenInfo) {
         try {
             String requestBody = OBJECT_MAPPER.writeValueAsString(Map.of("refresh_token", tokenInfo.refreshToken()));
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(websiteBase + REFRESH_PATH))
-                    .timeout(Duration.ofSeconds(20))
-                    .header("Accept", JSON_CONTENT_TYPE)
-                    .header("Content-Type", JSON_CONTENT_TYPE)
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8))
-                    .build();
-            HttpResponse<String> response;
+            URI refreshUri = URI.create(websiteBase + REFRESH_PATH);
+            CurlHttpClient.CurlResponse response;
             try {
-                response = httpClient.send(
-                        request,
-                        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+                response = curlHttpClient.request(
+                        "POST",
+                        refreshUri,
+                        Map.of(
+                                "Accept", JSON_CONTENT_TYPE,
+                                "Content-Type", JSON_CONTENT_TYPE
+                        ),
+                        requestBody,
+                        Duration.ofSeconds(20)
                 );
             } catch (IOException exception) {
                 throw JaipilotNetworkErrors.wrapRuntime(
                         "refresh the JAIPilot login session",
-                        URI.create(websiteBase + REFRESH_PATH),
-                        exception,
-                        httpClientDiagnostics
+                        refreshUri,
+                        exception
                 );
             }
             if (response.statusCode() / 100 != 2) {

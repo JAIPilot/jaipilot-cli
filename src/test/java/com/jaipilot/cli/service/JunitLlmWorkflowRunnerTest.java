@@ -332,7 +332,7 @@ class JunitLlmWorkflowRunnerTest {
                                     class CrashControllerTest {
                                     }
                                     """,
-                                    List.of("org/apache/kafka/common/utils/Utils.java"),
+                                    List.of("org/acme/jaipilot/workflowretry/DownloadedContextForWorkflowRetry.java"),
                                     List.of()
                             ),
                             null,
@@ -392,7 +392,9 @@ class JunitLlmWorkflowRunnerTest {
         assertEquals("session-1", result.sessionId());
         List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
         assertTrue(commandLog.stream().anyMatch(line -> line.contains("dependency:sources")));
-        assertTrue(Files.isRegularFile(projectRoot.resolve("src/main/java/org/apache/kafka/common/utils/Utils.java")));
+        assertTrue(Files.isRegularFile(projectRoot.resolve(
+                "src/main/java/org/acme/jaipilot/workflowretry/DownloadedContextForWorkflowRetry.java"
+        )));
     }
 
     private Path write(Path path, String content) throws Exception {
@@ -462,11 +464,11 @@ class JunitLlmWorkflowRunnerTest {
 
                 case "$*" in
                   *dependency:sources*)
-                    mkdir -p "$PWD/src/main/java/org/apache/kafka/common/utils"
-                    cat > "$PWD/src/main/java/org/apache/kafka/common/utils/Utils.java" <<'EOF'
-                package org.apache.kafka.common.utils;
+                    mkdir -p "$PWD/src/main/java/org/acme/jaipilot/workflowretry"
+                    cat > "$PWD/src/main/java/org/acme/jaipilot/workflowretry/DownloadedContextForWorkflowRetry.java" <<'EOF'
+                package org.acme.jaipilot.workflowretry;
 
-                public class Utils {
+                public class DownloadedContextForWorkflowRetry {
                 }
                 EOF
                     echo "downloaded sources"

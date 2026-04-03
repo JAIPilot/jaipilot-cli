@@ -10,7 +10,7 @@ import picocli.CommandLine.Parameters;
 @Command(
         name = "generate",
         mixinStandardHelpOptions = true,
-        description = "Generates a JUnit test by calling the backend JUnit LLM API."
+        description = "Generates and Improves coverage of a class."
 )
 public final class GenerateCommand extends BaseJunitLlmCommand {
 

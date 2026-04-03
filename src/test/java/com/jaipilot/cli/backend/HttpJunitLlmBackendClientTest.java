@@ -1,6 +1,5 @@
 package com.jaipilot.cli.backend;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jaipilot.cli.model.FetchJobResponse;
 import com.jaipilot.cli.model.InvokeJunitLlmRequest;
 import com.jaipilot.cli.model.InvokeJunitLlmResponse;
@@ -8,7 +7,6 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
@@ -46,12 +44,7 @@ class HttpJunitLlmBackendClientTest {
         });
         server.start();
 
-        HttpJunitLlmBackendClient client = new HttpJunitLlmBackendClient(
-                HttpClient.newHttpClient(),
-                new ObjectMapper(),
-                baseUrl(),
-                "token-123"
-        );
+        HttpJunitLlmBackendClient client = new HttpJunitLlmBackendClient(baseUrl(), "token-123");
 
         InvokeJunitLlmResponse response = client.invoke(new InvokeJunitLlmRequest(
                 null,
@@ -106,12 +99,7 @@ class HttpJunitLlmBackendClientTest {
         });
         server.start();
 
-        HttpJunitLlmBackendClient client = new HttpJunitLlmBackendClient(
-                HttpClient.newHttpClient(),
-                new ObjectMapper(),
-                baseUrl(),
-                "token-123"
-        );
+        HttpJunitLlmBackendClient client = new HttpJunitLlmBackendClient(baseUrl(), "token-123");
 
         FetchJobResponse response = client.fetchJob("job 1");
 
@@ -129,12 +117,7 @@ class HttpJunitLlmBackendClientTest {
         });
         server.start();
 
-        HttpJunitLlmBackendClient client = new HttpJunitLlmBackendClient(
-                HttpClient.newHttpClient(),
-                new ObjectMapper(),
-                baseUrl(),
-                "token-123"
-        );
+        HttpJunitLlmBackendClient client = new HttpJunitLlmBackendClient(baseUrl(), "token-123");
 
         FetchJobResponse response = client.fetchJob("job-1");
 
