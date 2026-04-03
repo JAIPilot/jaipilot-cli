@@ -825,6 +825,156 @@ class JunitLlmWorkflowRunnerTest {
     }
 
     @Test
+    void runDiscoversNonDefaultJacocoReportPathBeforeRetryingExplicitAgent() throws Exception {
+        Path projectRoot = tempDir.resolve("coverage-non-default-report-project");
+        write(projectRoot.resolve("pom.xml"), "<project/>");
+        Path cutPath = write(
+                projectRoot.resolve("src/main/java/com/example/CrashController.java"),
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+        Path outputPath = projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java");
+        Path fakeMaven = writeFakeMavenWithNonDefaultJacocoReportPath(projectRoot);
+
+        StubBackendClient backendClient = new StubBackendClient(
+                """
+                package com.example;
+
+                class CrashControllerTest {
+                    // PASS
+                }
+                """
+        );
+        ProjectFileService fileService = new ProjectFileService();
+        JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
+                backendClient,
+                fileService,
+                new UsedContextClassPathCache(tempDir.resolve("used-context-cache.json")),
+                new JunitLlmConsoleLogger(new PrintWriter(new StringWriter()))
+        );
+        StringWriter buildLogBuffer = new StringWriter();
+        JunitLlmWorkflowRunner workflowRunner = new JunitLlmWorkflowRunner(
+                sessionRunner,
+                new MavenCommandBuilder(),
+                new GradleCommandBuilder(),
+                new ProcessExecutor(),
+                fileService,
+                true,
+                new PrintWriter(buildLogBuffer, true)
+        );
+
+        JunitLlmSessionResult result = workflowRunner.run(
+                new JunitLlmSessionRequest(
+                        projectRoot,
+                        cutPath,
+                        outputPath,
+                        JunitLlmOperation.GENERATE,
+                        null,
+                        "",
+                        "",
+                        null
+                ),
+                fakeMaven,
+                List.of(),
+                Duration.ofSeconds(10)
+        );
+
+        assertEquals("session-1", result.sessionId());
+        String buildLogs = buildLogBuffer.toString();
+        assertTrue(buildLogs.contains("JaCoCo report discovered at non-default path:"));
+        List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
+        assertTrue(commandLog.stream().anyMatch(line -> line.contains("jacoco-maven-plugin:0.8.13:report")));
+        assertFalse(commandLog.stream().anyMatch(line -> line.contains("jacoco-maven-plugin:0.8.13:prepare-agent")));
+    }
+
+    @Test
+    void runSkipsExplicitJacocoAgentRetryWhenProjectAlreadyDeclaresJacocoPlugin() throws Exception {
+        Path projectRoot = tempDir.resolve("coverage-jacoco-plugin-declared-project");
+        write(
+                projectRoot.resolve("pom.xml"),
+                """
+                <project>
+                  <build>
+                    <plugins>
+                      <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                      </plugin>
+                    </plugins>
+                  </build>
+                </project>
+                """
+        );
+        Path cutPath = write(
+                projectRoot.resolve("src/main/java/com/example/CrashController.java"),
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+        Path outputPath = projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java");
+        Path fakeMaven = writeFakeMavenThatCrashesOnExplicitJacocoAgent(projectRoot);
+
+        StubBackendClient backendClient = new StubBackendClient(
+                """
+                package com.example;
+
+                class CrashControllerTest {
+                    // PASS
+                }
+                """
+        );
+        ProjectFileService fileService = new ProjectFileService();
+        JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
+                backendClient,
+                fileService,
+                new UsedContextClassPathCache(tempDir.resolve("used-context-cache.json")),
+                new JunitLlmConsoleLogger(new PrintWriter(new StringWriter()))
+        );
+        StringWriter buildLogBuffer = new StringWriter();
+        JunitLlmWorkflowRunner workflowRunner = new JunitLlmWorkflowRunner(
+                sessionRunner,
+                new MavenCommandBuilder(),
+                new GradleCommandBuilder(),
+                new ProcessExecutor(),
+                fileService,
+                true,
+                new PrintWriter(buildLogBuffer, true)
+        );
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> workflowRunner.run(
+                        new JunitLlmSessionRequest(
+                                projectRoot,
+                                cutPath,
+                                outputPath,
+                                JunitLlmOperation.GENERATE,
+                                null,
+                                "",
+                                "",
+                                null
+                        ),
+                        fakeMaven,
+                        List.of(),
+                        Duration.ofSeconds(10)
+                )
+        );
+
+        assertTrue(exception.getMessage().contains("JaCoCo report not found"));
+        String buildLogs = buildLogBuffer.toString();
+        assertTrue(buildLogs.contains("skipping explicit JaCoCo agent retry to avoid duplicate -javaagent entries."));
+        List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
+        assertFalse(commandLog.stream().anyMatch(line -> line.contains("jacoco-maven-plugin:0.8.13:prepare-agent")));
+    }
+
+    @Test
     void runDoesNotTreatGenericMavenWrapperMainStackLineAsIncompleteWrapper() throws Exception {
         Path projectRoot = tempDir.resolve("wrapper-stackline-project");
         write(projectRoot.resolve("pom.xml"), "<project/>");
@@ -1131,6 +1281,122 @@ class JunitLlmWorkflowRunnerTest {
                 EOF
                     echo "coverage report generated with explicit agent"
                     exit 0
+                    ;;
+                  *jacoco-maven-plugin*)
+                    echo "Skipping JaCoCo execution due to missing execution data file."
+                    exit 0
+                    ;;
+                  *-Dtest=com.example.CrashControllerTest*test)
+                    if grep -q TEST_FAIL "$TEST_FILE" 2>/dev/null; then
+                      echo "Tests run: 1, Failures: 1"
+                      exit 1
+                    fi
+                    echo "Tests run: 1, Failures: 0"
+                    exit 0
+                    ;;
+                  *)
+                    echo "unexpected command: $*"
+                    exit 2
+                    ;;
+                esac
+                """);
+        boolean executable = fakeMaven.toFile().setExecutable(true);
+        assertTrue(executable, "fake Maven script must be executable");
+        return fakeMaven;
+    }
+
+    private Path writeFakeMavenWithNonDefaultJacocoReportPath(Path projectRoot) throws Exception {
+        Path fakeMaven = projectRoot.resolve("mvnw");
+        Files.createDirectories(projectRoot);
+        write(
+                projectRoot.resolve(".mvn/wrapper/maven-wrapper.properties"),
+                "distributionUrl=https://repo.maven.apache.org/maven2\n"
+        );
+        Files.writeString(fakeMaven, """
+                #!/usr/bin/env sh
+                set -eu
+
+                TEST_FILE="$PWD/src/test/java/com/example/CrashControllerTest.java"
+                printf '%s\\n' "$*" >> "$PWD/maven-commands.log"
+
+                case "$*" in
+                  *dependency:sources*)
+                    echo "downloaded sources"
+                    exit 0
+                    ;;
+                  *test-compile*)
+                    echo "compile ok"
+                    exit 0
+                    ;;
+                  *verify*)
+                    echo "codebase rules ok"
+                    exit 0
+                    ;;
+                  *jacoco-maven-plugin*)
+                    mkdir -p "$PWD/module-a/target/site/jacoco"
+                    cat > "$PWD/module-a/target/site/jacoco/jacoco.xml" <<EOF
+                <?xml version="1.0" encoding="UTF-8"?>
+                <report name="jaipilot">
+                  <package name="com/example">
+                    <sourcefile name="CrashController.java">
+                      <counter type="LINE" missed="2" covered="18"/>
+                    </sourcefile>
+                  </package>
+                </report>
+                EOF
+                    echo "coverage report generated in module-a"
+                    exit 0
+                    ;;
+                  *-Dtest=com.example.CrashControllerTest*test)
+                    if grep -q TEST_FAIL "$TEST_FILE" 2>/dev/null; then
+                      echo "Tests run: 1, Failures: 1"
+                      exit 1
+                    fi
+                    echo "Tests run: 1, Failures: 0"
+                    exit 0
+                    ;;
+                  *)
+                    echo "unexpected command: $*"
+                    exit 2
+                    ;;
+                esac
+                """);
+        boolean executable = fakeMaven.toFile().setExecutable(true);
+        assertTrue(executable, "fake Maven script must be executable");
+        return fakeMaven;
+    }
+
+    private Path writeFakeMavenThatCrashesOnExplicitJacocoAgent(Path projectRoot) throws Exception {
+        Path fakeMaven = projectRoot.resolve("mvnw");
+        Files.createDirectories(projectRoot);
+        write(
+                projectRoot.resolve(".mvn/wrapper/maven-wrapper.properties"),
+                "distributionUrl=https://repo.maven.apache.org/maven2\n"
+        );
+        Files.writeString(fakeMaven, """
+                #!/usr/bin/env sh
+                set -eu
+
+                TEST_FILE="$PWD/src/test/java/com/example/CrashControllerTest.java"
+                printf '%s\\n' "$*" >> "$PWD/maven-commands.log"
+
+                case "$*" in
+                  *dependency:sources*)
+                    echo "downloaded sources"
+                    exit 0
+                    ;;
+                  *test-compile*)
+                    echo "compile ok"
+                    exit 0
+                    ;;
+                  *verify*)
+                    echo "codebase rules ok"
+                    exit 0
+                    ;;
+                  *jacoco-maven-plugin*prepare-agent*)
+                    echo "Error occurred in starting fork"
+                    echo "Process Exit Code: 134"
+                    exit 134
                     ;;
                   *jacoco-maven-plugin*)
                     echo "Skipping JaCoCo execution due to missing execution data file."

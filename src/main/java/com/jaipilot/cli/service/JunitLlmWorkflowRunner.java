@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
 import java.net.URI;
+import java.util.stream.Stream;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -624,11 +625,28 @@ public final class JunitLlmWorkflowRunner {
             );
         }
 
+        Path resolvedReportPath = discoverMavenJacocoReportPath(
+                buildTool,
+                projectRoot,
+                coverageCoordinate,
+                reportPath
+        );
+        if (!resolvedReportPath.equals(reportPath)) {
+            progress("JaCoCo report discovered at non-default path: " + resolvedReportPath);
+        }
+
         CoverageSnapshot snapshot;
         try {
-            snapshot = readJacocoLineCoverage(reportPath, coverageCoordinate);
+            snapshot = readJacocoLineCoverage(resolvedReportPath, coverageCoordinate);
         } catch (IllegalStateException exception) {
-            if (!shouldRetryMavenCoverageWithPrepareAgent(buildTool, reportPath, coverageResult.output())) {
+            if (!shouldRetryMavenCoverageWithPrepareAgent(buildTool, resolvedReportPath, coverageResult.output())) {
+                throw exception;
+            }
+            if (projectDeclaresMavenJacocoPlugin(projectRoot)) {
+                progress(
+                        "JaCoCo execution data is missing, but the project already declares jacoco-maven-plugin; "
+                                + "skipping explicit JaCoCo agent retry to avoid duplicate -javaagent entries."
+                );
                 throw exception;
             }
             progress("JaCoCo report missing after initial coverage run; retrying with explicit JaCoCo agent.");
@@ -648,9 +666,18 @@ public final class JunitLlmWorkflowRunner {
                                 + failureDetails(retryCoverageResult.output(), 8)
                 );
             }
-            snapshot = readJacocoLineCoverage(reportPath, coverageCoordinate);
+            resolvedReportPath = discoverMavenJacocoReportPath(
+                    buildTool,
+                    projectRoot,
+                    coverageCoordinate,
+                    reportPath
+            );
+            if (!resolvedReportPath.equals(reportPath)) {
+                progress("JaCoCo report discovered at non-default path after retry: " + resolvedReportPath);
+            }
+            snapshot = readJacocoLineCoverage(resolvedReportPath, coverageCoordinate);
         }
-        progress("JaCoCo report: " + reportPath);
+        progress("JaCoCo report: " + resolvedReportPath);
         return snapshot;
     }
 
@@ -797,6 +824,70 @@ public final class JunitLlmWorkflowRunner {
                     .resolve("build/reports/jacoco/test/jacocoTestReport.xml")
                     .normalize();
         };
+    }
+
+    private Path discoverMavenJacocoReportPath(
+            BuildTool buildTool,
+            Path projectRoot,
+            CoverageCoordinate coverageCoordinate,
+            Path defaultReportPath
+    ) {
+        if (buildTool != BuildTool.MAVEN || Files.isRegularFile(defaultReportPath)) {
+            return defaultReportPath;
+        }
+
+        List<Path> candidates = new ArrayList<>();
+        candidates.add(defaultReportPath);
+        candidates.addAll(additionalMavenJacocoReportCandidates(projectRoot, defaultReportPath));
+        for (Path candidate : candidates) {
+            if (!Files.isRegularFile(candidate)) {
+                continue;
+            }
+            if (jacocoReportContainsCoverage(candidate, coverageCoordinate)) {
+                return candidate;
+            }
+        }
+        return defaultReportPath;
+    }
+
+    private List<Path> additionalMavenJacocoReportCandidates(Path projectRoot, Path defaultReportPath) {
+        if (projectRoot == null || !Files.isDirectory(projectRoot)) {
+            return List.of();
+        }
+
+        List<Path> candidates = new ArrayList<>();
+        try (Stream<Path> pathStream = Files.walk(projectRoot, 10)) {
+            pathStream
+                    .filter(Files::isRegularFile)
+                    .map(Path::normalize)
+                    .filter(path -> !path.equals(defaultReportPath))
+                    .filter(this::isLikelyMavenJacocoReportPath)
+                    .forEach(candidates::add);
+        } catch (Exception ignored) {
+            // Fall through to the default report path if discovery fails.
+        }
+        candidates.sort((left, right) -> left.toString().compareTo(right.toString()));
+        return candidates;
+    }
+
+    private boolean isLikelyMavenJacocoReportPath(Path reportPath) {
+        String fileName = reportPath.getFileName() == null ? "" : reportPath.getFileName().toString();
+        if (!"jacoco.xml".equalsIgnoreCase(fileName)) {
+            return false;
+        }
+        String normalized = reportPath.toString().replace('\\', '/').toLowerCase(Locale.ROOT);
+        return normalized.contains("/target/site/")
+                || normalized.contains("/target/jacoco")
+                || normalized.contains("/jacoco/");
+    }
+
+    private boolean jacocoReportContainsCoverage(Path reportPath, CoverageCoordinate coverageCoordinate) {
+        try {
+            readJacocoLineCoverage(reportPath, coverageCoordinate);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private Path gradleProjectDirectory(Path projectRoot, String gradleProjectPath) {
@@ -1037,6 +1128,30 @@ public final class JunitLlmWorkflowRunner {
         String normalizedOutput = output == null ? "" : output.toLowerCase(Locale.ROOT);
         return normalizedOutput.contains("skipping jacoco execution due to missing execution data file")
                 || normalizedOutput.contains("missing execution data file");
+    }
+
+    private boolean projectDeclaresMavenJacocoPlugin(Path projectRoot) {
+        if (projectRoot == null || !Files.isDirectory(projectRoot)) {
+            return false;
+        }
+        try (Stream<Path> pathStream = Files.walk(projectRoot, 8)) {
+            return pathStream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> "pom.xml".equalsIgnoreCase(path.getFileName().toString()))
+                    .anyMatch(this::pomDeclaresMavenJacocoPlugin);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private boolean pomDeclaresMavenJacocoPlugin(Path pomPath) {
+        try {
+            String pomContent = Files.readString(pomPath, StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
+            return pomContent.contains("<artifactid>jacoco-maven-plugin</artifactid>")
+                    || pomContent.contains("org.jacoco:jacoco-maven-plugin");
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private ExecutionResult mergeExecutionResults(
