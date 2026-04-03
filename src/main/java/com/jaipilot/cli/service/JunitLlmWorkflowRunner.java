@@ -12,6 +12,7 @@ import com.jaipilot.cli.process.ProcessExecutor;
 import com.jaipilot.cli.util.SensitiveDataRedactor;
 import java.io.InputStream;
 import java.io.PrintWriter;
+import java.io.StringReader;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -24,10 +25,16 @@ import java.util.Locale;
 import java.util.regex.Pattern;
 import java.net.URI;
 import java.util.stream.Stream;
+import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
+import org.xml.sax.SAXException;
+import org.xml.sax.SAXParseException;
+import org.xml.sax.helpers.DefaultHandler;
 
 public final class JunitLlmWorkflowRunner {
 
@@ -745,37 +752,35 @@ public final class JunitLlmWorkflowRunner {
             throw new IllegalStateException("JaCoCo report not found at " + reportPath);
         }
 
-        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-        factory.setXIncludeAware(false);
-        factory.setExpandEntityReferences(false);
+        Document reportDocument;
+        try {
+            reportDocument = parseXmlDocumentWithDoctypeFallback(reportPath, true);
+        } catch (Exception exception) {
+            throw new IllegalStateException(
+                    "Failed to parse JaCoCo report at " + reportPath + ": " + exception.getMessage(),
+                    exception
+            );
+        }
 
-        try (InputStream reportStream = Files.newInputStream(reportPath)) {
-            NodeList packageNodes = factory.newDocumentBuilder()
-                    .parse(reportStream)
-                    .getElementsByTagName("package");
-            for (int packageIndex = 0; packageIndex < packageNodes.getLength(); packageIndex++) {
-                Node packageNode = packageNodes.item(packageIndex);
-                if (!(packageNode instanceof Element packageElement)) {
+        NodeList packageNodes = reportDocument.getElementsByTagName("package");
+        for (int packageIndex = 0; packageIndex < packageNodes.getLength(); packageIndex++) {
+            Node packageNode = packageNodes.item(packageIndex);
+            if (!(packageNode instanceof Element packageElement)) {
+                continue;
+            }
+            if (!coverageCoordinate.packagePath().equals(packageElement.getAttribute("name"))) {
+                continue;
+            }
+            NodeList sourceFileNodes = packageElement.getElementsByTagName("sourcefile");
+            for (int sourceFileIndex = 0; sourceFileIndex < sourceFileNodes.getLength(); sourceFileIndex++) {
+                Node sourceFileNode = sourceFileNodes.item(sourceFileIndex);
+                if (!(sourceFileNode instanceof Element sourceFileElement)) {
                     continue;
                 }
-                if (!coverageCoordinate.packagePath().equals(packageElement.getAttribute("name"))) {
+                if (!coverageCoordinate.sourceFileName().equals(sourceFileElement.getAttribute("name"))) {
                     continue;
                 }
-                NodeList sourceFileNodes = packageElement.getElementsByTagName("sourcefile");
-                for (int sourceFileIndex = 0; sourceFileIndex < sourceFileNodes.getLength(); sourceFileIndex++) {
-                    Node sourceFileNode = sourceFileNodes.item(sourceFileIndex);
-                    if (!(sourceFileNode instanceof Element sourceFileElement)) {
-                        continue;
-                    }
-                    if (!coverageCoordinate.sourceFileName().equals(sourceFileElement.getAttribute("name"))) {
-                        continue;
-                    }
-                    return lineCoverageFromCounter(reportPath, sourceFileElement);
-                }
+                return lineCoverageFromCounter(reportPath, sourceFileElement);
             }
         }
 
@@ -783,6 +788,67 @@ public final class JunitLlmWorkflowRunner {
                 "JaCoCo report did not contain line coverage for " + coverageCoordinate.packagePath() + "/"
                         + coverageCoordinate.sourceFileName()
         );
+    }
+
+    private Document parseXmlDocumentWithDoctypeFallback(Path reportPath, boolean logDoctypeFallback) throws Exception {
+        try {
+            return parseXmlDocument(reportPath, true);
+        } catch (Exception exception) {
+            if (!isDoctypeDisallowed(exception)) {
+                throw exception;
+            }
+            if (logDoctypeFallback) {
+                progress("XML report contains a DOCTYPE declaration; retrying parse with external entity resolution disabled.");
+            }
+            return parseXmlDocument(reportPath, false);
+        }
+    }
+
+    private Document parseXmlDocument(Path reportPath, boolean disallowDoctype) throws Exception {
+        DocumentBuilderFactory factory = secureDocumentBuilderFactory(disallowDoctype);
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        builder.setEntityResolver((publicId, systemId) -> new InputSource(new StringReader("")));
+        builder.setErrorHandler(new DefaultHandler() {
+            @Override
+            public void error(SAXParseException exception) throws SAXException {
+                throw exception;
+            }
+
+            @Override
+            public void fatalError(SAXParseException exception) throws SAXException {
+                throw exception;
+            }
+        });
+        try (InputStream reportStream = Files.newInputStream(reportPath)) {
+            return builder.parse(reportStream);
+        }
+    }
+
+    private DocumentBuilderFactory secureDocumentBuilderFactory(boolean disallowDoctype) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", disallowDoctype);
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        factory.setXIncludeAware(false);
+        factory.setExpandEntityReferences(false);
+        return factory;
+    }
+
+    private boolean isDoctypeDisallowed(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null) {
+                String normalizedMessage = message.toLowerCase(Locale.ROOT);
+                if (normalizedMessage.contains("doctype is disallowed")
+                        || normalizedMessage.contains("disallow-doctype-decl")) {
+                    return true;
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private CoverageSnapshot lineCoverageFromCounter(Path reportPath, Element sourceFileElement) {
@@ -1384,33 +1450,22 @@ public final class JunitLlmWorkflowRunner {
             return;
         }
 
-        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         try {
-            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-            factory.setXIncludeAware(false);
-            factory.setExpandEntityReferences(false);
-
-            try (InputStream reportStream = Files.newInputStream(reportPath)) {
-                NodeList fileNodes = factory.newDocumentBuilder()
-                        .parse(reportStream)
-                        .getElementsByTagName("file");
-                for (int fileIndex = 0; fileIndex < fileNodes.getLength() && details.size() < maxDetails; fileIndex++) {
-                    Node fileNode = fileNodes.item(fileIndex);
-                    if (!(fileNode instanceof Element fileElement)) {
+            Document reportDocument = parseXmlDocumentWithDoctypeFallback(reportPath, false);
+            NodeList fileNodes = reportDocument.getElementsByTagName("file");
+            for (int fileIndex = 0; fileIndex < fileNodes.getLength() && details.size() < maxDetails; fileIndex++) {
+                Node fileNode = fileNodes.item(fileIndex);
+                if (!(fileNode instanceof Element fileElement)) {
+                    continue;
+                }
+                String fileName = fileElement.getAttribute("name");
+                NodeList errorNodes = fileElement.getElementsByTagName("error");
+                for (int errorIndex = 0; errorIndex < errorNodes.getLength() && details.size() < maxDetails; errorIndex++) {
+                    Node errorNode = errorNodes.item(errorIndex);
+                    if (!(errorNode instanceof Element errorElement)) {
                         continue;
                     }
-                    String fileName = fileElement.getAttribute("name");
-                    NodeList errorNodes = fileElement.getElementsByTagName("error");
-                    for (int errorIndex = 0; errorIndex < errorNodes.getLength() && details.size() < maxDetails; errorIndex++) {
-                        Node errorNode = errorNodes.item(errorIndex);
-                        if (!(errorNode instanceof Element errorElement)) {
-                            continue;
-                        }
-                        details.add(formatCheckstyleViolation(fileName, errorElement));
-                    }
+                    details.add(formatCheckstyleViolation(fileName, errorElement));
                 }
             }
         } catch (Exception ignored) {
