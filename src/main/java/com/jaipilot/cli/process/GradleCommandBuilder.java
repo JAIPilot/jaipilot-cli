@@ -29,7 +29,7 @@ public final class GradleCommandBuilder implements LocalBuildCommandBuilder {
             String gradleProjectPath
     ) {
         List<String> command = baseCommand(projectRoot, explicitGradleExecutable, additionalArguments);
-        command.add(qualifyTask(gradleProjectPath, "testClasses"));
+        command.add(qualifyTask(gradleProjectPath, "compileTestJava"));
         return command;
     }
 

@@ -28,7 +28,7 @@ class GradleCommandBuilderTest {
         assertTrue(command.contains("--no-daemon"));
         assertTrue(command.contains("--console=plain"));
         assertTrue(command.contains("--stacktrace"));
-        assertTrue(command.contains("testClasses"));
+        assertTrue(command.contains("compileTestJava"));
     }
 
     @Test
@@ -40,7 +40,7 @@ class GradleCommandBuilderTest {
                 ":clients"
         );
 
-        assertTrue(command.contains(":clients:testClasses"));
+        assertTrue(command.contains(":clients:compileTestJava"));
     }
 
     @Test
