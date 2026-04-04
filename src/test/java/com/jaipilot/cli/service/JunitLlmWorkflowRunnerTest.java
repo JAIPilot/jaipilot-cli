@@ -233,7 +233,7 @@ class JunitLlmWorkflowRunnerTest {
     }
 
     @Test
-    void runSkipsPostGenerationValidationAndCoverageWhenTestIsUnchanged() throws Exception {
+    void runStillValidatesAndCollectsCoverageWhenTestIsUnchanged() throws Exception {
         Path projectRoot = tempDir.resolve("unchanged-test-project");
         write(projectRoot.resolve("pom.xml"), "<project/>");
         Path cutPath = write(
@@ -267,9 +267,11 @@ class JunitLlmWorkflowRunnerTest {
         );
 
         List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
-        assertEquals(2, commandLog.size());
-        assertTrue(commandLog.get(0).contains("test-compile"));
-        assertTrue(commandLog.get(1).contains("verify"));
+        assertEquals(6, commandLog.size());
+        assertTrue(commandLog.stream().anyMatch(line -> line.contains("test-compile")));
+        assertTrue(commandLog.stream().anyMatch(line -> line.contains("verify")));
+        assertTrue(commandLog.stream().anyMatch(line -> line.contains("-Dtest=com.example.CrashControllerTest") && line.contains(" test")));
+        assertTrue(commandLog.stream().anyMatch(line -> line.contains("jacoco-maven-plugin:0.8.13:report")));
     }
 
     @Test

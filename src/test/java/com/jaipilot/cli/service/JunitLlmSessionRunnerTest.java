@@ -233,6 +233,95 @@ class JunitLlmSessionRunnerTest {
         assertEquals("Class not found", backendClient.requests.get(1).contextClasses().get(0));
     }
 
+    @Test
+    void runResolvesRequiredContextViaGradleJavap() throws Exception {
+        Path projectRoot = tempDir.resolve("gradle-project");
+        write("gradle-project/settings.gradle.kts", "rootProject.name = \"gradle-project\"\n");
+        write("gradle-project/build.gradle.kts", "plugins { java }\n");
+        Path gradleWrapper = write(
+                "gradle-project/gradlew",
+                """
+                #!/usr/bin/env sh
+                set -eu
+                OUTPUT_FILE=""
+                for ARG in "$@"; do
+                  case "$ARG" in
+                    -PjaipilotClasspathOutput=*)
+                      OUTPUT_FILE="${ARG#-PjaipilotClasspathOutput=}"
+                      ;;
+                  esac
+                done
+                if echo "$*" | grep -q "jaipilotWriteCompileClasspath"; then
+                  mkdir -p "$(dirname "$OUTPUT_FILE")"
+                  printf "%s" "$PWD/build/classes/java/main" > "$OUTPUT_FILE"
+                  exit 0
+                fi
+                echo "unexpected gradle command: $*"
+                exit 2
+                """
+        );
+        boolean executable = gradleWrapper.toFile().setExecutable(true);
+        assertTrue(executable, "gradlew must be executable");
+
+        Path cutPath = write(
+                "gradle-project/src/main/java/com/example/CrashController.java",
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+
+        StubBackendClient backendClient = new StubBackendClient(
+                new FetchJobResponse(
+                        "done",
+                        new FetchJobResponse.FetchJobOutput(
+                                "session-gradle",
+                                "package com.example;\nclass DraftTest {}\n",
+                                List.of("java.lang.String"),
+                                List.of()
+                        ),
+                        null,
+                        null
+                ),
+                new FetchJobResponse(
+                        "done",
+                        new FetchJobResponse.FetchJobOutput(
+                                "session-gradle",
+                                "package com.example;\nclass FinalTest {}\n",
+                                List.of(),
+                                List.of()
+                        ),
+                        null,
+                        null
+                )
+        );
+
+        JunitLlmSessionRunner runner = new JunitLlmSessionRunner(
+                backendClient,
+                new ProjectFileService(),
+                new UsedContextClassPathCache(tempDir.resolve("used-context-cache-gradle.json")),
+                new JunitLlmConsoleLogger(new PrintWriter(new StringWriter(), true))
+        );
+
+        runner.run(new JunitLlmSessionRequest(
+                projectRoot,
+                cutPath,
+                projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java"),
+                JunitLlmOperation.GENERATE,
+                null,
+                "",
+                "",
+                null
+        ));
+
+        assertEquals(2, backendClient.requests.size());
+        String resolvedContext = backendClient.requests.get(1).contextClasses().get(0);
+        assertFalse("Class not found".equals(resolvedContext));
+        assertTrue(resolvedContext.contains("java.lang.String"));
+    }
+
     private Path write(String relativePath, String content) throws Exception {
         Path path = tempDir.resolve(relativePath);
         Files.createDirectories(path.getParent());

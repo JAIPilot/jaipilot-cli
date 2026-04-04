@@ -285,25 +285,18 @@ public final class JunitLlmWorkflowRunner {
     ) throws Exception {
         String currentTestCode = readTestCode(latestSessionResult.outputPath());
         String latestValidatedTestCode = normalizeTestCode(lastValidatedTestCode);
-        boolean buildExecuted = false;
+        boolean buildExecuted = true;
 
-        ValidationFailure validationFailure;
-        if (hasTestCodeChanged(latestValidatedTestCode, currentTestCode)) {
-            validationFailure = validateLocalBuild(
-                    buildTool,
-                    initialRequest.projectRoot(),
-                    compilationRoot,
-                    initialRequest.cutPath(),
-                    latestSessionResult.outputPath(),
-                    buildExecutable,
-                    timeout
-            );
-            latestValidatedTestCode = currentTestCode;
-            buildExecuted = true;
-        } else {
-            progress("Skipping validation build because test file is unchanged.");
-            return new ValidationPassResult(latestSessionResult, latestValidatedTestCode, false);
-        }
+        ValidationFailure validationFailure = validateLocalBuild(
+                buildTool,
+                initialRequest.projectRoot(),
+                compilationRoot,
+                initialRequest.cutPath(),
+                latestSessionResult.outputPath(),
+                buildExecutable,
+                timeout
+        );
+        latestValidatedTestCode = currentTestCode;
 
         if (validationFailure == null) {
             return new ValidationPassResult(latestSessionResult, latestValidatedTestCode, buildExecuted);
@@ -326,10 +319,9 @@ public final class JunitLlmWorkflowRunner {
             currentTestCode = readTestCode(latestSessionResult.outputPath());
             if (!hasTestCodeChanged(latestValidatedTestCode, currentTestCode)) {
                 progress(
-                        "Skipping validation build after fix attempt " + fixAttempt
-                                + " because test file is unchanged."
+                        "Fix attempt " + fixAttempt + " did not change the test file; retrying with the same failure logs."
                 );
-                throw new IllegalStateException(localValidationFailureMessage(validationFailure));
+                continue;
             }
 
             validationFailure = validateLocalBuild(
@@ -630,6 +622,8 @@ public final class JunitLlmWorkflowRunner {
 
     private CoverageSnapshot lineCoverageFromCounter(Path reportPath, Element sourceFileElement) {
         NodeList counters = sourceFileElement.getElementsByTagName("counter");
+        List<Integer> coveredLineNumbers = coveredLineNumbers(sourceFileElement);
+        List<Integer> missedLineNumbers = missedLineNumbers(sourceFileElement);
         for (int index = 0; index < counters.getLength(); index++) {
             Node counterNode = counters.item(index);
             if (!(counterNode instanceof Element counterElement)) {
@@ -640,9 +634,58 @@ public final class JunitLlmWorkflowRunner {
             }
             int missed = Integer.parseInt(counterElement.getAttribute("missed"));
             int covered = Integer.parseInt(counterElement.getAttribute("covered"));
-            return new CoverageSnapshot(reportPath, covered, missed);
+            return new CoverageSnapshot(reportPath, covered, missed, coveredLineNumbers, missedLineNumbers);
         }
         throw new IllegalStateException("JaCoCo report did not contain LINE counter for " + reportPath);
+    }
+
+    private List<Integer> coveredLineNumbers(Element sourceFileElement) {
+        List<Integer> covered = new ArrayList<>();
+        NodeList lines = sourceFileElement.getElementsByTagName("line");
+        for (int index = 0; index < lines.getLength(); index++) {
+            Node lineNode = lines.item(index);
+            if (!(lineNode instanceof Element lineElement)) {
+                continue;
+            }
+            int coveredInstructions = integerAttribute(lineElement, "ci");
+            if (coveredInstructions <= 0) {
+                continue;
+            }
+            int lineNumber = integerAttribute(lineElement, "nr");
+            if (lineNumber > 0) {
+                covered.add(lineNumber);
+            }
+        }
+        return List.copyOf(covered);
+    }
+
+    private List<Integer> missedLineNumbers(Element sourceFileElement) {
+        List<Integer> missed = new ArrayList<>();
+        NodeList lines = sourceFileElement.getElementsByTagName("line");
+        for (int index = 0; index < lines.getLength(); index++) {
+            Node lineNode = lines.item(index);
+            if (!(lineNode instanceof Element lineElement)) {
+                continue;
+            }
+            int coveredInstructions = integerAttribute(lineElement, "ci");
+            int missedInstructions = integerAttribute(lineElement, "mi");
+            if (!(coveredInstructions == 0 && missedInstructions > 0)) {
+                continue;
+            }
+            int lineNumber = integerAttribute(lineElement, "nr");
+            if (lineNumber > 0) {
+                missed.add(lineNumber);
+            }
+        }
+        return List.copyOf(missed);
+    }
+
+    private int integerAttribute(Element element, String attribute) {
+        try {
+            return Integer.parseInt(element.getAttribute(attribute));
+        } catch (NumberFormatException exception) {
+            return 0;
+        }
     }
 
     private CoverageCoordinate coverageCoordinate(Path cutPath) {
@@ -727,6 +770,8 @@ public final class JunitLlmWorkflowRunner {
                 .append(System.lineSeparator());
         builder.append("Current line coverage: ")
                 .append(coverageRun.snapshot().describe())
+                .append(System.lineSeparator());
+        builder.append(coverageRun.snapshot().lineBreakdown())
                 .append(System.lineSeparator());
         builder.append("Coverage build output:")
                 .append(System.lineSeparator())
@@ -1004,6 +1049,36 @@ public final class JunitLlmWorkflowRunner {
         return String.format(Locale.ROOT, "%.2f%%", ratio * 100.0d);
     }
 
+    private static String lineListSummary(List<Integer> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return "none";
+        }
+        StringBuilder builder = new StringBuilder();
+        int first = lines.get(0);
+        int previous = first;
+        for (int index = 1; index < lines.size(); index++) {
+            int current = lines.get(index);
+            if (current == previous + 1) {
+                previous = current;
+                continue;
+            }
+            appendRange(builder, first, previous);
+            builder.append(',');
+            first = current;
+            previous = current;
+        }
+        appendRange(builder, first, previous);
+        return builder.toString();
+    }
+
+    private static void appendRange(StringBuilder builder, int start, int end) {
+        if (start == end) {
+            builder.append(start);
+            return;
+        }
+        builder.append(start).append('-').append(end);
+    }
+
     private void progress(String message) {
         buildLogWriter.println("PROGRESS: " + message);
         buildLogWriter.flush();
@@ -1017,7 +1092,13 @@ public final class JunitLlmWorkflowRunner {
     private record CoverageCoordinate(String packagePath, String sourceFileName) {
     }
 
-    private record CoverageSnapshot(Path reportPath, int coveredLines, int missedLines) {
+    private record CoverageSnapshot(
+            Path reportPath,
+            int coveredLines,
+            int missedLines,
+            List<Integer> coveredLineNumbers,
+            List<Integer> missedLineNumbers
+    ) {
         int totalLines() {
             return coveredLines + missedLines;
         }
@@ -1039,6 +1120,12 @@ public final class JunitLlmWorkflowRunner {
                     totalLines(),
                     reportPath
             );
+        }
+
+        String lineBreakdown() {
+            return "Covered lines: " + lineListSummary(coveredLineNumbers)
+                    + System.lineSeparator()
+                    + "Missed lines: " + lineListSummary(missedLineNumbers);
         }
     }
 

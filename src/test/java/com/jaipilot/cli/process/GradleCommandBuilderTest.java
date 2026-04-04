@@ -123,6 +123,27 @@ class GradleCommandBuilderTest {
     }
 
     @Test
+    void buildsCompileClasspathCommand() {
+        List<String> command = commandBuilder.buildCompileClasspath(
+                Path.of("/tmp/project"),
+                Path.of("custom-gradle"),
+                List.of("--stacktrace"),
+                ":clients",
+                Path.of("/tmp/jaipilot-classpath-init.gradle"),
+                Path.of("/tmp/.classpath.txt")
+        );
+
+        assertEquals("custom-gradle", command.get(0));
+        assertTrue(command.contains("--no-daemon"));
+        assertTrue(command.contains("--console=plain"));
+        assertTrue(command.contains("--stacktrace"));
+        assertTrue(command.contains("-I"));
+        assertTrue(command.contains("/tmp/jaipilot-classpath-init.gradle"));
+        assertTrue(command.contains("-PjaipilotClasspathOutput=/tmp/.classpath.txt"));
+        assertTrue(command.contains(":clients:jaipilotWriteCompileClasspath"));
+    }
+
+    @Test
     void buildsSingleTestCoverageCommand() {
         List<String> command = commandBuilder.buildSingleTestCoverage(
                 Path.of("/tmp/project"),

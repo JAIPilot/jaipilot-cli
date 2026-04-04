@@ -9,6 +9,7 @@ import com.jaipilot.cli.model.JunitLlmSessionRequest;
 import com.jaipilot.cli.model.JunitLlmSessionResult;
 import com.jaipilot.cli.process.BuildTool;
 import com.jaipilot.cli.process.ExecutionResult;
+import com.jaipilot.cli.process.GradleCommandBuilder;
 import com.jaipilot.cli.process.MavenCommandBuilder;
 import com.jaipilot.cli.process.ProcessExecutor;
 import java.io.File;
@@ -31,14 +32,51 @@ public final class JunitLlmSessionRunner {
     private static final String DEFAULT_MOCKITO_VERSION = "5.11.0";
     private static final String MISSING_CONTEXT_CLASS_PLACEHOLDER = "Class not found";
     private static final String MAVEN_CLASSPATH_OUTPUT_FILE = ".classpath.txt";
+    private static final String GRADLE_CLASSPATH_OUTPUT_FILE = ".gradle-classpath.txt";
     private static final Duration CONTEXT_RESOLUTION_TIMEOUT = Duration.ofSeconds(120);
     private static final PrintWriter QUIET_WRITER = new PrintWriter(Writer.nullWriter());
+    private static final String GRADLE_CLASSPATH_INIT_SCRIPT = """
+            allprojects { project ->
+                project.tasks.register("jaipilotWriteCompileClasspath") {
+                    doLast {
+                        String outputPath = project.findProperty("jaipilotClasspathOutput")?.toString()
+                        if (!outputPath) {
+                            throw new GradleException("Missing -PjaipilotClasspathOutput")
+                        }
+                        def javaPluginApplied = project.plugins.hasPlugin("java")
+                                || project.plugins.hasPlugin("java-library")
+                        def entries = new LinkedHashSet<String>()
+                        if (javaPluginApplied) {
+                            def sourceSets = project.extensions.findByName("sourceSets")
+                            def mainSourceSet = sourceSets == null ? null : sourceSets.findByName("main")
+                            if (mainSourceSet != null) {
+                                mainSourceSet.output.classesDirs.files.each { file ->
+                                    if (file != null) {
+                                        entries.add(file.absolutePath)
+                                    }
+                                }
+                                if (mainSourceSet.output.resourcesDir != null) {
+                                    entries.add(mainSourceSet.output.resourcesDir.absolutePath)
+                                }
+                                mainSourceSet.compileClasspath.files.each { file ->
+                                    if (file != null) {
+                                        entries.add(file.absolutePath)
+                                    }
+                                }
+                            }
+                        }
+                        new File(outputPath).text = entries.join(File.pathSeparator)
+                    }
+                }
+            }
+            """;
 
     private final JunitLlmBackendClient backendClient;
     private final ProjectFileService fileService;
     private final UsedContextClassPathCache usedContextClassPathCache;
     private final JunitLlmConsoleLogger consoleLogger;
     private final MavenCommandBuilder mavenCommandBuilder;
+    private final GradleCommandBuilder gradleCommandBuilder;
     private final ProcessExecutor processExecutor;
 
     public JunitLlmSessionRunner(
@@ -53,6 +91,7 @@ public final class JunitLlmSessionRunner {
                 usedContextClassPathCache,
                 consoleLogger,
                 new MavenCommandBuilder(),
+                new GradleCommandBuilder(),
                 new ProcessExecutor()
         );
     }
@@ -63,6 +102,7 @@ public final class JunitLlmSessionRunner {
             UsedContextClassPathCache usedContextClassPathCache,
             JunitLlmConsoleLogger consoleLogger,
             MavenCommandBuilder mavenCommandBuilder,
+            GradleCommandBuilder gradleCommandBuilder,
             ProcessExecutor processExecutor
     ) {
         this.backendClient = backendClient;
@@ -70,6 +110,7 @@ public final class JunitLlmSessionRunner {
         this.usedContextClassPathCache = usedContextClassPathCache;
         this.consoleLogger = consoleLogger;
         this.mavenCommandBuilder = mavenCommandBuilder == null ? new MavenCommandBuilder() : mavenCommandBuilder;
+        this.gradleCommandBuilder = gradleCommandBuilder == null ? new GradleCommandBuilder() : gradleCommandBuilder;
         this.processExecutor = processExecutor == null ? new ProcessExecutor() : processExecutor;
     }
 
@@ -248,10 +289,19 @@ public final class JunitLlmSessionRunner {
         }
 
         BuildTool buildTool = fileService.detectBuildTool(sessionRequest.projectRoot(), null).orElse(null);
-        if (buildTool != BuildTool.MAVEN) {
-            return missingContextClasses(requiredContextClassNames);
+        if (buildTool == BuildTool.MAVEN) {
+            return resolveRequiredContextClassesViaMavenJavap(sessionRequest, requiredContextClassNames);
         }
+        if (buildTool == BuildTool.GRADLE) {
+            return resolveRequiredContextClassesViaGradleJavap(sessionRequest, requiredContextClassNames);
+        }
+        return missingContextClasses(requiredContextClassNames);
+    }
 
+    private List<String> resolveRequiredContextClassesViaMavenJavap(
+            JunitLlmSessionRequest sessionRequest,
+            List<String> requiredContextClassNames
+    ) {
         Path moduleRoot = resolveMavenModuleRoot(sessionRequest);
         ExecutionResult classpathBuildResult;
         try {
@@ -285,12 +335,67 @@ public final class JunitLlmSessionRunner {
         } catch (Exception exception) {
             return missingContextClasses(requiredContextClassNames);
         }
-
         String javapClasspath = moduleRoot.resolve("target/classes").toAbsolutePath().normalize()
                 + (dependencyClasspath.isBlank() ? "" : File.pathSeparator + dependencyClasspath);
+        return runJavapForClasses(moduleRoot, javapClasspath, requiredContextClassNames);
+    }
+
+    private List<String> resolveRequiredContextClassesViaGradleJavap(
+            JunitLlmSessionRequest sessionRequest,
+            List<String> requiredContextClassNames
+    ) {
+        Path projectRoot = sessionRequest.projectRoot().toAbsolutePath().normalize();
+        String gradleProjectPath = fileService.deriveGradleProjectPath(projectRoot, sessionRequest.cutPath());
+        Path classpathFile = projectRoot.resolve(GRADLE_CLASSPATH_OUTPUT_FILE).toAbsolutePath().normalize();
+        Path initScript;
+        try {
+            initScript = Files.createTempFile("jaipilot-gradle-classpath-", ".gradle");
+            Files.writeString(initScript, GRADLE_CLASSPATH_INIT_SCRIPT, StandardCharsets.UTF_8);
+        } catch (Exception exception) {
+            return missingContextClasses(requiredContextClassNames);
+        }
+
+        ExecutionResult classpathBuildResult;
+        try {
+            classpathBuildResult = processExecutor.execute(
+                    gradleCommandBuilder.buildCompileClasspath(
+                            projectRoot,
+                            null,
+                            List.of("--quiet"),
+                            gradleProjectPath,
+                            initScript,
+                            classpathFile
+                    ),
+                    projectRoot,
+                    CONTEXT_RESOLUTION_TIMEOUT,
+                    false,
+                    QUIET_WRITER
+            );
+        } catch (Exception exception) {
+            tryDelete(initScript);
+            return missingContextClasses(requiredContextClassNames);
+        }
+        tryDelete(initScript);
+        if (!isSuccessful(classpathBuildResult) || !Files.isRegularFile(classpathFile)) {
+            return missingContextClasses(requiredContextClassNames);
+        }
+
+        String javapClasspath;
+        try {
+            javapClasspath = Files.readString(classpathFile, StandardCharsets.UTF_8).trim();
+        } catch (Exception exception) {
+            return missingContextClasses(requiredContextClassNames);
+        }
+        if (javapClasspath.isBlank()) {
+            return missingContextClasses(requiredContextClassNames);
+        }
+        return runJavapForClasses(projectRoot, javapClasspath, requiredContextClassNames);
+    }
+
+    private List<String> runJavapForClasses(Path workingDirectory, String javapClasspath, List<String> classNames) {
         List<String> resolvedContextClasses = new ArrayList<>();
-        for (String requiredContextClassName : requiredContextClassNames) {
-            String className = requiredContextClassName == null ? "" : requiredContextClassName.trim();
+        for (String requiredContextClassName : classNames) {
+            String className = normalizeRequiredClassName(requiredContextClassName);
             if (className.isBlank()) {
                 resolvedContextClasses.add(MISSING_CONTEXT_CLASS_PLACEHOLDER);
                 continue;
@@ -299,7 +404,7 @@ public final class JunitLlmSessionRunner {
             try {
                 javapResult = processExecutor.execute(
                         List.of("javap", "-classpath", javapClasspath, className),
-                        moduleRoot,
+                        workingDirectory,
                         CONTEXT_RESOLUTION_TIMEOUT,
                         false,
                         QUIET_WRITER
@@ -315,6 +420,47 @@ public final class JunitLlmSessionRunner {
             }
         }
         return List.copyOf(resolvedContextClasses);
+    }
+
+    private String normalizeRequiredClassName(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String normalized = value.trim();
+        if (normalized.startsWith("import ")) {
+            normalized = normalized.substring("import ".length()).trim();
+        }
+        if (normalized.endsWith(";")) {
+            normalized = normalized.substring(0, normalized.length() - 1).trim();
+        }
+        if (normalized.endsWith(".class")) {
+            normalized = normalized.substring(0, normalized.length() - ".class".length()).trim();
+        }
+        if (normalized.endsWith(".java")) {
+            normalized = normalized.substring(0, normalized.length() - ".java".length()).trim();
+        }
+        if (normalized.startsWith("src/main/java/")) {
+            normalized = normalized.substring("src/main/java/".length());
+        }
+        if (normalized.startsWith("src/test/java/")) {
+            normalized = normalized.substring("src/test/java/".length());
+        }
+        normalized = normalized.replace('/', '.').replace('\\', '.');
+        while (normalized.startsWith(".")) {
+            normalized = normalized.substring(1);
+        }
+        while (normalized.endsWith(".")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
+    }
+
+    private void tryDelete(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (Exception ignored) {
+            // Best-effort cleanup.
+        }
     }
 
     private Path resolveMavenModuleRoot(JunitLlmSessionRequest sessionRequest) {

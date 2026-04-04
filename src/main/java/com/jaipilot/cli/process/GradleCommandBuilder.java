@@ -92,6 +92,22 @@ public final class GradleCommandBuilder implements LocalBuildCommandBuilder {
         return command;
     }
 
+    public List<String> buildCompileClasspath(
+            Path projectRoot,
+            Path explicitGradleExecutable,
+            List<String> additionalArguments,
+            String gradleProjectPath,
+            Path initScriptPath,
+            Path outputFile
+    ) {
+        List<String> command = baseCommand(projectRoot, explicitGradleExecutable, additionalArguments);
+        command.add("-I");
+        command.add(initScriptPath.toString());
+        command.add("-PjaipilotClasspathOutput=" + outputFile.toAbsolutePath().normalize());
+        command.add(qualifyTask(gradleProjectPath, "jaipilotWriteCompileClasspath"));
+        return command;
+    }
+
     public List<String> buildSingleTestCoverage(
             Path projectRoot,
             Path explicitGradleExecutable,
