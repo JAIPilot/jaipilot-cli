@@ -32,7 +32,7 @@ class JunitLlmWorkflowRunnerTest {
     Path tempDir;
 
     @Test
-    void runSucceedsWhenGeneratedTestPassesValidationAndCoverage() throws Exception {
+    void runSucceedsWhenGeneratedTestPassesValidation() throws Exception {
         Path projectRoot = tempDir.resolve("project");
         write(projectRoot.resolve("pom.xml"), "<project/>");
         Path cutPath = write(
@@ -47,7 +47,6 @@ class JunitLlmWorkflowRunnerTest {
                 class CrashControllerTest {
                     // PASS
                     // HIGH_COVERAGE
-                    // INCLUDE_DOCTYPE
                 }
                 """));
         JunitLlmWorkflowRunner workflowRunner = newWorkflowRunner(backendClient, new ProjectFileService());
@@ -76,7 +75,6 @@ class JunitLlmWorkflowRunnerTest {
         assertTrue(commandLog.stream().anyMatch(line -> line.contains("test-compile")));
         assertTrue(commandLog.stream().anyMatch(line -> line.contains("verify")));
         assertTrue(commandLog.stream().anyMatch(line -> line.contains("-Dtest=com.example.CrashControllerTest") && line.contains(" test")));
-        assertTrue(commandLog.stream().anyMatch(line -> line.contains("jacoco-maven-plugin:0.8.13:report")));
     }
 
     @Test
@@ -138,7 +136,7 @@ class JunitLlmWorkflowRunnerTest {
     }
 
     @Test
-    void runImprovesCoverageToReachTarget() throws Exception {
+    void runDoesNotTriggerCoverageFixWhenValidationPasses() throws Exception {
         Path projectRoot = tempDir.resolve("coverage-improvement-project");
         write(projectRoot.resolve("pom.xml"), "<project/>");
         Path cutPath = write(
@@ -183,13 +181,10 @@ class JunitLlmWorkflowRunnerTest {
         );
 
         assertEquals("session-1", result.sessionId());
-        assertEquals(2, backendClient.requests.size());
-        assertEquals("fix", backendClient.requests.get(1).type());
-        assertTrue(backendClient.requests.get(1).clientLogs().contains("Coverage target: 80.00% line coverage."));
-        assertTrue(backendClient.requests.get(1).clientLogs().contains("Current line coverage:"));
+        assertEquals(1, backendClient.requests.size());
 
         List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
-        assertTrue(commandLog.stream().filter(line -> line.contains("jacoco-maven-plugin:0.8.13:report")).count() >= 2);
+        assertFalse(commandLog.stream().anyMatch(line -> line.contains("jacoco-maven-plugin:0.8.13:report")));
     }
 
     @Test
@@ -234,7 +229,7 @@ class JunitLlmWorkflowRunnerTest {
     }
 
     @Test
-    void runStillValidatesAndCollectsCoverageWhenTestIsUnchanged() throws Exception {
+    void runStillValidatesWhenTestIsUnchanged() throws Exception {
         Path projectRoot = tempDir.resolve("unchanged-test-project");
         write(projectRoot.resolve("pom.xml"), "<project/>");
         Path cutPath = write(
@@ -268,11 +263,10 @@ class JunitLlmWorkflowRunnerTest {
         );
 
         List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
-        assertEquals(6, commandLog.size());
+        assertEquals(5, commandLog.size());
         assertTrue(commandLog.stream().anyMatch(line -> line.contains("test-compile")));
         assertTrue(commandLog.stream().anyMatch(line -> line.contains("verify")));
         assertTrue(commandLog.stream().anyMatch(line -> line.contains("-Dtest=com.example.CrashControllerTest") && line.contains(" test")));
-        assertTrue(commandLog.stream().anyMatch(line -> line.contains("jacoco-maven-plugin:0.8.13:report")));
     }
 
     @Test
@@ -312,7 +306,6 @@ class JunitLlmWorkflowRunnerTest {
         List<String> moduleCommandLog = Files.readAllLines(moduleRoot.resolve("maven-commands.log"));
         assertTrue(moduleCommandLog.stream().anyMatch(line -> line.contains("test-compile")));
         assertTrue(moduleCommandLog.stream().anyMatch(line -> line.contains("verify")));
-        assertTrue(moduleCommandLog.stream().anyMatch(line -> line.contains("jacoco-maven-plugin:0.8.13:report")));
     }
 
     @Test
@@ -424,8 +417,6 @@ class JunitLlmWorkflowRunnerTest {
                 echo "$*" >> "$LOG_FILE"
 
                 TEST_FILE="$PWD/src/test/java/com/example/CrashControllerTest.java"
-                JACOCO_XML="$PWD/target/site/jacoco/jacoco.xml"
-
                 if echo "$*" | grep -q "dependency:sources"; then
                   mkdir -p "$PWD/src/main/java/com/example"
                   if [ ! -f "$PWD/src/main/java/com/example/Dependency.java" ]; then
@@ -461,44 +452,6 @@ class JunitLlmWorkflowRunnerTest {
                     exit 1
                   fi
                   echo "rules ok"
-                  exit 0
-                fi
-
-                if echo "$*" | grep -q "jacoco-maven-plugin"; then
-                  if grep -q TEST_FAIL "$TEST_FILE" 2>/dev/null; then
-                    echo "Tests run: 1, Failures: 1"
-                    echo "AssertionFailedError: expected: <200> but was: <500>"
-                    echo "Caused by: java.lang.IllegalStateException: boom"
-                    exit 1
-                  fi
-                  mkdir -p "$(dirname \"$JACOCO_XML\")"
-                  if grep -q LOW_COVERAGE "$TEST_FILE" 2>/dev/null; then
-                    COVERED=3
-                    MISSED=7
-                  elif grep -q MEDIUM_COVERAGE "$TEST_FILE" 2>/dev/null; then
-                    COVERED=7
-                    MISSED=3
-                  else
-                    COVERED=9
-                    MISSED=1
-                  fi
-                  if grep -q INCLUDE_DOCTYPE "$TEST_FILE" 2>/dev/null; then
-                    DOCTYPE_LINE='<!DOCTYPE report SYSTEM "jacoco.dtd">'
-                  else
-                    DOCTYPE_LINE=''
-                  fi
-                  cat > "$JACOCO_XML" <<XML
-                <?xml version=\"1.0\" encoding=\"UTF-8\"?>
-                $DOCTYPE_LINE
-                <report name=\"JAIPilot\">
-                  <package name=\"com/example\">
-                    <sourcefile name=\"CrashController.java\">
-                      <counter type=\"LINE\" missed=\"$MISSED\" covered=\"$COVERED\"/>
-                    </sourcefile>
-                  </package>
-                </report>
-                XML
-                  echo "coverage ok"
                   exit 0
                 fi
 

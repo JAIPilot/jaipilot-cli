@@ -10,7 +10,7 @@ import picocli.CommandLine.Parameters;
 @Command(
         name = "generate",
         mixinStandardHelpOptions = true,
-        description = "Generates and Improves coverage of a class."
+        description = "Generates tests for a class."
 )
 public final class GenerateCommand extends BaseJunitLlmCommand {
 
