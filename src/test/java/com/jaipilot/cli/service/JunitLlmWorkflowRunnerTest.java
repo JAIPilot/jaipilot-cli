@@ -287,7 +287,7 @@ class JunitLlmWorkflowRunnerTest {
         );
 
         assertEquals(2, backendClient.requests.size());
-        assertEquals(List.of("class not found"), backendClient.requests.get(1).contextClasses());
+        assertEquals(List.of("Class not found"), backendClient.requests.get(1).contextClasses());
 
         List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
         assertEquals(2, commandLog.size());

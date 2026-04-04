@@ -27,6 +27,7 @@ import java.util.Set;
 public final class ProjectFileService {
 
     private static final System.Logger LOGGER = System.getLogger(ProjectFileService.class.getName());
+    private static final String MISSING_CONTEXT_SOURCE_PLACEHOLDER = "Class not found";
 
     private static final List<Path> JAVA_SOURCE_ROOTS = List.of(
             Path.of("src", "main", "java"),
@@ -257,17 +258,21 @@ public final class ProjectFileService {
                     requestedPath,
                     exception.getMessage()
             );
-            return "class not found";
+            return MISSING_CONTEXT_SOURCE_PLACEHOLDER;
         }
     }
 
     public List<String> readCachedContextEntries(Path projectRoot, List<String> contextPaths) {
+        return readCachedContextEntries(projectRoot, null, contextPaths);
+    }
+
+    public List<String> readCachedContextEntries(Path projectRoot, Path preferredSourcePath, List<String> contextPaths) {
         if (contextPaths == null || contextPaths.isEmpty()) {
             return List.of();
         }
 
         return contextPaths.stream()
-                .map(path -> path + " =\n" + readRequestedContextSource(projectRoot, null, path))
+                .map(path -> path + " =\n" + readRequestedContextSourceOrPlaceholder(projectRoot, preferredSourcePath, path))
                 .toList();
     }
 

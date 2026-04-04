@@ -61,7 +61,12 @@ public final class JunitLlmSessionRunner {
                     testClassName,
                     DEFAULT_MOCKITO_VERSION,
                     cutCode,
-                    buildCachedContextClasses(sessionRequest.projectRoot(), importedContextPaths, cachedContextPaths),
+                    buildCachedContextClasses(
+                            sessionRequest.projectRoot(),
+                            sessionRequest.cutPath(),
+                            importedContextPaths,
+                            cachedContextPaths
+                    ),
                     normalizeText(sessionRequest.initialTestClassCode()),
                     requestedContextClasses,
                     normalizeText(currentTestCode),
@@ -200,11 +205,12 @@ public final class JunitLlmSessionRunner {
 
     private List<String> buildCachedContextClasses(
             Path projectRoot,
+            Path preferredSourcePath,
             List<String> importedContextPaths,
             List<String> cachedContextPaths
     ) {
         Set<String> contextPaths = new LinkedHashSet<>(importedContextPaths);
         contextPaths.addAll(cachedContextPaths);
-        return fileService.readCachedContextEntries(projectRoot, List.copyOf(contextPaths));
+        return fileService.readCachedContextEntries(projectRoot, preferredSourcePath, List.copyOf(contextPaths));
     }
 }

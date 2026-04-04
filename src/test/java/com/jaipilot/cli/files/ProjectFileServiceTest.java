@@ -223,6 +223,67 @@ class ProjectFileServiceTest {
     }
 
     @Test
+    void readCachedContextEntriesUsesPreferredSourceModuleForDependencyLookups() throws Exception {
+        Path projectRoot = tempDir.resolve("workspace");
+        Path moduleRoot = projectRoot.resolve("module-b");
+        Files.createDirectories(moduleRoot);
+        Files.writeString(projectRoot.resolve("pom.xml"), "<project/>");
+        Files.writeString(moduleRoot.resolve("pom.xml"), "<project/>");
+        Path cutPath = writeSource(
+                projectRoot,
+                "module-b/src/main/java/com/example/CrashController.java",
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+        String requestedContextPath = "com/myntra/commons/client/exception/WebClientException.java";
+        List<Path> capturedModuleRoots = new ArrayList<>();
+
+        ProjectFileService dependencyAwareFileService = new ProjectFileService(
+                List.of(),
+                (ignoredProjectRoot, requestedModuleRoot, requestedFqcn) -> {
+                    capturedModuleRoots.add(requestedModuleRoot);
+                    if (!"com.myntra.commons.client.exception.WebClientException".equals(requestedFqcn)) {
+                        return Optional.empty();
+                    }
+                    if (!moduleRoot.toAbsolutePath().normalize().equals(requestedModuleRoot)) {
+                        return Optional.empty();
+                    }
+                    return Optional.of(new ProjectFileService.ResolvedContextSource(
+                            requestedContextPath,
+                            """
+                            package com.myntra.commons.client.exception;
+
+                            public class WebClientException extends RuntimeException {
+                            }
+                            """
+                    ));
+                }
+        );
+
+        assertEquals(
+                List.of(requestedContextPath + " =\nClass not found"),
+                dependencyAwareFileService.readCachedContextEntries(projectRoot, List.of(requestedContextPath))
+        );
+
+        dependencyAwareFileService.refreshDependencySourceIndex();
+        List<String> resolvedContextEntries = dependencyAwareFileService.readCachedContextEntries(
+                projectRoot,
+                cutPath,
+                List.of(requestedContextPath)
+        );
+
+        assertEquals(projectRoot.toAbsolutePath().normalize(), capturedModuleRoots.get(0));
+        assertEquals(moduleRoot.toAbsolutePath().normalize(), capturedModuleRoots.get(1));
+        assertEquals(1, resolvedContextEntries.size());
+        assertTrue(resolvedContextEntries.get(0).contains("package com.myntra.commons.client.exception;"));
+        assertTrue(resolvedContextEntries.get(0).contains("class WebClientException"));
+    }
+
+    @Test
     void readRequestedContextSourcesPrefersTheSameModuleAsTheSourcePath() throws Exception {
         Path projectRoot = tempDir.resolve("workspace");
         Files.createDirectories(projectRoot.resolve("module-a"));
@@ -389,7 +450,7 @@ class ProjectFileServiceTest {
                 List.of("com/myntra/commons/dto/MissingDto.java")
         );
 
-        assertEquals(List.of("class not found"), contextSources);
+        assertEquals(List.of("Class not found"), contextSources);
     }
 
     @Test
@@ -424,7 +485,7 @@ class ProjectFileServiceTest {
                 List.of("com/myntra/commons/dto/MissingDto.java")
         );
 
-        assertEquals(List.of("class not found"), contextSources);
+        assertEquals(List.of("Class not found"), contextSources);
     }
 
     @Test
@@ -468,7 +529,7 @@ class ProjectFileServiceTest {
                 cutPath,
                 List.of("com.google.common.base.Strings")
         );
-        assertEquals(List.of("class not found"), firstAttempt);
+        assertEquals(List.of("Class not found"), firstAttempt);
 
         // First miss is negatively cached; refresh must clear it before retry.
         List<String> secondAttempt = dependencyAwareFileService.readRequestedContextSources(
@@ -476,7 +537,7 @@ class ProjectFileServiceTest {
                 cutPath,
                 List.of("com.google.common.base.Strings")
         );
-        assertEquals(List.of("class not found"), secondAttempt);
+        assertEquals(List.of("Class not found"), secondAttempt);
 
         dependencyAwareFileService.refreshDependencySourceIndex();
         List<String> contextSources = dependencyAwareFileService.readRequestedContextSources(
@@ -550,7 +611,7 @@ class ProjectFileServiceTest {
                 List.of("com/example/RequestedContext.java")
         );
 
-        assertEquals(List.of("class not found"), contextSources);
+        assertEquals(List.of("Class not found"), contextSources);
     }
 
     @Test
