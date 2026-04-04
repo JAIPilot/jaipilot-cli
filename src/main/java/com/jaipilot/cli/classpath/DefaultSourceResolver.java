@@ -10,31 +10,28 @@ import java.util.List;
 import java.util.Optional;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-import org.apache.maven.shared.invoker.MavenInvocationException;
 
 public final class DefaultSourceResolver implements SourceResolver {
 
     private static final System.Logger LOGGER = System.getLogger(DefaultSourceResolver.class.getName());
 
-    private final Path projectRoot;
     private final Path moduleRoot;
-    private final MavenInvokerClient mavenInvokerClient;
     private final MavenCoordinateExtractor coordinateExtractor;
+    private final CfrDecompiler cfrDecompiler;
 
     public DefaultSourceResolver(Path projectRoot, Path moduleRoot) {
-        this(projectRoot, moduleRoot, new MavenInvokerClient(), new MavenCoordinateExtractor());
+        this(projectRoot, moduleRoot, new MavenCoordinateExtractor(), new CfrDecompiler());
     }
 
     DefaultSourceResolver(
             Path projectRoot,
             Path moduleRoot,
-            MavenInvokerClient mavenInvokerClient,
-            MavenCoordinateExtractor coordinateExtractor
+            MavenCoordinateExtractor coordinateExtractor,
+            CfrDecompiler cfrDecompiler
     ) {
-        this.projectRoot = projectRoot == null ? null : projectRoot.toAbsolutePath().normalize();
         this.moduleRoot = moduleRoot == null ? null : moduleRoot.toAbsolutePath().normalize();
-        this.mavenInvokerClient = mavenInvokerClient;
         this.coordinateExtractor = coordinateExtractor;
+        this.cfrDecompiler = cfrDecompiler;
     }
 
     @Override
@@ -54,22 +51,42 @@ public final class DefaultSourceResolver implements SourceResolver {
     }
 
     private Optional<ResolvedSource> resolveSourceInternal(ClassResolutionResult classResult, ResolutionOptions options) {
-        if (classResult == null) {
+        if (classResult == null || classResult.kind() == LocationKind.NOT_FOUND) {
             return Optional.empty();
         }
 
-        if (classResult.mappedSourcePath().isPresent()) {
-            Path sourcePath = classResult.mappedSourcePath().get();
-            if (Files.isRegularFile(sourcePath)) {
-                return Optional.of(new ResolvedSource(
-                        classResult.fqcn(),
-                        SourceOrigin.WORKSPACE_FILE,
-                        sourcePath,
-                        readFile(sourcePath)
-                ));
-            }
+        Optional<ResolvedSource> workspaceSource = resolveWorkspaceSource(classResult);
+        if (workspaceSource.isPresent()) {
+            return workspaceSource;
         }
 
+        Optional<ResolvedSource> sourceJarSource = resolveExternalSourceJar(classResult, options);
+        if (sourceJarSource.isPresent()) {
+            return sourceJarSource;
+        }
+
+        return resolveDecompiledSource(classResult, options);
+    }
+
+    private Optional<ResolvedSource> resolveWorkspaceSource(ClassResolutionResult classResult) {
+        if (classResult.mappedSourcePath().isEmpty()) {
+            return Optional.empty();
+        }
+
+        Path sourcePath = classResult.mappedSourcePath().get();
+        if (!Files.isRegularFile(sourcePath)) {
+            return Optional.empty();
+        }
+
+        return Optional.of(new ResolvedSource(
+                classResult.fqcn(),
+                SourceOrigin.WORKSPACE_FILE,
+                sourcePath,
+                readFile(sourcePath)
+        ));
+    }
+
+    private Optional<ResolvedSource> resolveExternalSourceJar(ClassResolutionResult classResult, ResolutionOptions options) {
         if (classResult.kind() != LocationKind.EXTERNAL_JAR || !options.resolveExternalSources()) {
             return Optional.empty();
         }
@@ -88,10 +105,6 @@ public final class DefaultSourceResolver implements SourceResolver {
 
         Path sourceJar = locateSourceJar(jarPath, coordinates).orElse(null);
         if (sourceJar == null) {
-            fetchSourceJar(coordinates, options);
-            sourceJar = locateSourceJar(jarPath, coordinates).orElse(null);
-        }
-        if (sourceJar == null) {
             return Optional.empty();
         }
 
@@ -107,6 +120,20 @@ public final class DefaultSourceResolver implements SourceResolver {
                 sourceJar,
                 sourceText.get()
         ));
+    }
+
+    private Optional<ResolvedSource> resolveDecompiledSource(ClassResolutionResult classResult, ResolutionOptions options) {
+        if (classResult.kind() == LocationKind.EXTERNAL_JAR && !options.resolveExternalSources()) {
+            return Optional.empty();
+        }
+
+        return cfrDecompiler.decompile(classResult.containerPath(), classResult.classEntryPath())
+                .map(sourceText -> new ResolvedSource(
+                        classResult.fqcn(),
+                        SourceOrigin.DECOMPILED_CLASS,
+                        classResult.containerPath(),
+                        sourceText
+                ));
     }
 
     private String readFile(Path sourcePath) {
@@ -170,34 +197,6 @@ public final class DefaultSourceResolver implements SourceResolver {
                 .map(Path::normalize)
                 .distinct()
                 .toList();
-    }
-
-    private void fetchSourceJar(MavenCoordinates coordinates, ResolutionOptions options) {
-        if (projectRoot == null || moduleRoot == null) {
-            return;
-        }
-
-        Path executable = BuildExecutableResolver.resolveMavenExecutable(projectRoot, moduleRoot);
-        List<String> args = new ArrayList<>(options.buildArgs());
-        args.add("-Dtransitive=false");
-        args.add("-Dartifact=" + coordinates.groupId() + ':' + coordinates.artifactId() + ':' + coordinates.version() + ":jar:sources");
-        try {
-            MavenInvokerClient.MavenExecutionResult result = mavenInvokerClient.execute(
-                    moduleRoot,
-                    executable,
-                    List.of("dependency:get"),
-                    args
-            );
-            if (!result.isSuccessful()) {
-                LOGGER.log(System.Logger.Level.DEBUG,
-                        "dependency:get for sources failed for {0}:{1}:{2}",
-                        coordinates.groupId(),
-                        coordinates.artifactId(),
-                        coordinates.version());
-            }
-        } catch (MavenInvocationException ignored) {
-            // Source lookup is optional and lazy; ignore fetch failures.
-        }
     }
 
     private Optional<String> readZipEntry(Path sourceJar, String sourceEntryPath) {

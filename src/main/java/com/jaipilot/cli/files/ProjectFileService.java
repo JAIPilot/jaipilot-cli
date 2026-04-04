@@ -1064,8 +1064,8 @@ public final class ProjectFileService {
 
     private String unresolvedContextMessage(String requestedPath) {
         return "Unable to resolve requested context class path " + requestedPath
-                + ". Checked workspace sources and dependency sources. "
-                + "Ensure the class is on the module test classpath and dependency sources are available.";
+                + ". Checked workspace sources, dependency sources, and decompiled class files. "
+                + "Ensure the class is on the module test classpath and dependency artifacts are available.";
     }
 
     private IllegalStateException classpathResolutionFailure(
