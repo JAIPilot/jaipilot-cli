@@ -254,7 +254,7 @@ class JunitLlmWorkflowRunnerTest {
     }
 
     @Test
-    void runFailsFastWhenMissingContextCannotBeResolved() throws Exception {
+    void runContinuesWhenMissingContextCannotBeResolved() throws Exception {
         Path projectRoot = tempDir.resolve("missing-context-project");
         write(projectRoot.resolve("pom.xml"), "<project/>");
         Path cutPath = write(
@@ -270,30 +270,27 @@ class JunitLlmWorkflowRunnerTest {
         );
         JunitLlmWorkflowRunner workflowRunner = newWorkflowRunner(backendClient, new ProjectFileService());
 
-        IllegalStateException exception = assertThrows(
-                IllegalStateException.class,
-                () -> workflowRunner.run(
-                        new JunitLlmSessionRequest(
-                                projectRoot,
-                                cutPath,
-                                outputPath,
-                                JunitLlmOperation.GENERATE,
-                                null,
-                                "",
-                                "",
-                                null
-                        ),
-                        fakeMaven,
-                        List.of(),
-                        Duration.ofSeconds(10)
-                )
+        workflowRunner.run(
+                new JunitLlmSessionRequest(
+                        projectRoot,
+                        cutPath,
+                        outputPath,
+                        JunitLlmOperation.GENERATE,
+                        null,
+                        "",
+                        "",
+                        null
+                ),
+                fakeMaven,
+                List.of(),
+                Duration.ofSeconds(10)
         );
 
-        assertTrue(exception.getMessage().contains("Unable to resolve requested context class path com/example/Dependency.java"));
-        assertEquals(1, backendClient.requests.size());
+        assertEquals(2, backendClient.requests.size());
+        assertEquals(List.of("class not found"), backendClient.requests.get(1).contextClasses());
 
         List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
-        assertEquals(1, commandLog.size());
+        assertEquals(2, commandLog.size());
         assertTrue(commandLog.stream().allMatch(line -> line.contains("test-compile")));
         assertFalse(commandLog.stream().anyMatch(line -> line.contains("dependency:sources")));
     }

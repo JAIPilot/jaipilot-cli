@@ -14,7 +14,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProjectFileServiceTest {
@@ -367,7 +366,7 @@ class ProjectFileServiceTest {
     }
 
     @Test
-    void readRequestedContextSourcesFailsFastWithActionableHintWhenClasspathResolverMisses() throws Exception {
+    void readRequestedContextSourcesUsesPlaceholderWhenClasspathResolverMisses() throws Exception {
         Path projectRoot = tempDir.resolve("workspace");
         Path cutPath = writeSource(
                 projectRoot,
@@ -384,21 +383,17 @@ class ProjectFileServiceTest {
                 (ignoredProjectRoot, ignoredModuleRoot, requestedFqcn) -> Optional.empty()
         );
 
-        IllegalStateException exception = assertThrows(
-                IllegalStateException.class,
-                () -> classpathAwareFileService.readRequestedContextSources(
-                        projectRoot,
-                        cutPath,
-                        List.of("com/myntra/commons/dto/MissingDto.java")
-                )
+        List<String> contextSources = classpathAwareFileService.readRequestedContextSources(
+                projectRoot,
+                cutPath,
+                List.of("com/myntra/commons/dto/MissingDto.java")
         );
 
-        assertTrue(exception.getMessage().contains("Unable to resolve requested context class path com/myntra/commons/dto/MissingDto.java"));
-        assertTrue(exception.getMessage().contains("module test classpath"));
+        assertEquals(List.of("class not found"), contextSources);
     }
 
     @Test
-    void readRequestedContextSourcesSurfacesClasspathFailureDetails() throws Exception {
+    void readRequestedContextSourcesUsesPlaceholderWhenClasspathResolverFails() throws Exception {
         Path projectRoot = tempDir.resolve("workspace");
         Path cutPath = writeSource(
                 projectRoot,
@@ -423,19 +418,13 @@ class ProjectFileServiceTest {
                 }
         );
 
-        IllegalStateException exception = assertThrows(
-                IllegalStateException.class,
-                () -> classpathAwareFileService.readRequestedContextSources(
-                        projectRoot,
-                        cutPath,
-                        List.of("com/myntra/commons/dto/MissingDto.java")
-                )
+        List<String> contextSources = classpathAwareFileService.readRequestedContextSources(
+                projectRoot,
+                cutPath,
+                List.of("com/myntra/commons/dto/MissingDto.java")
         );
 
-        assertTrue(exception.getMessage().contains("Unable to resolve requested context class path com/myntra/commons/dto/MissingDto.java"));
-        assertTrue(exception.getMessage().contains("CLASSPATH_RESOLUTION_FAILED"));
-        assertTrue(exception.getMessage().contains("dependency:build-classpath"));
-        assertTrue(exception.getMessage().contains("mocked resolver failure"));
+        assertEquals(List.of("class not found"), contextSources);
     }
 
     @Test
@@ -474,24 +463,20 @@ class ProjectFileServiceTest {
                 }
         );
 
-        assertThrows(
-                IllegalStateException.class,
-                () -> dependencyAwareFileService.readRequestedContextSources(
-                        projectRoot,
-                        cutPath,
-                        List.of("com.google.common.base.Strings")
-                )
+        List<String> firstAttempt = dependencyAwareFileService.readRequestedContextSources(
+                projectRoot,
+                cutPath,
+                List.of("com.google.common.base.Strings")
         );
+        assertEquals(List.of("class not found"), firstAttempt);
 
         // First miss is negatively cached; refresh must clear it before retry.
-        assertThrows(
-                IllegalStateException.class,
-                () -> dependencyAwareFileService.readRequestedContextSources(
-                        projectRoot,
-                        cutPath,
-                        List.of("com.google.common.base.Strings")
-                )
+        List<String> secondAttempt = dependencyAwareFileService.readRequestedContextSources(
+                projectRoot,
+                cutPath,
+                List.of("com.google.common.base.Strings")
         );
+        assertEquals(List.of("class not found"), secondAttempt);
 
         dependencyAwareFileService.refreshDependencySourceIndex();
         List<String> contextSources = dependencyAwareFileService.readRequestedContextSources(
@@ -560,15 +545,12 @@ class ProjectFileServiceTest {
                 """
         );
 
-        IllegalStateException exception = assertThrows(
-                IllegalStateException.class,
-                () -> projectFileService.readRequestedContextSources(
-                        projectRoot,
-                        List.of("com/example/RequestedContext.java")
-                )
+        List<String> contextSources = projectFileService.readRequestedContextSources(
+                projectRoot,
+                List.of("com/example/RequestedContext.java")
         );
 
-        assertTrue(exception.getMessage().contains("Unable to resolve requested context class path"));
+        assertEquals(List.of("class not found"), contextSources);
     }
 
     @Test

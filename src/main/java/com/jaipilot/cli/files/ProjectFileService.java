@@ -2,8 +2,6 @@ package com.jaipilot.cli.files;
 
 import com.jaipilot.cli.classpath.BuildToolClassResolutionService;
 import com.jaipilot.cli.classpath.ClasspathResolutionException;
-import com.jaipilot.cli.classpath.ClassResolutionResult;
-import com.jaipilot.cli.classpath.LocationKind;
 import com.jaipilot.cli.classpath.ResolutionOptions;
 import com.jaipilot.cli.classpath.ResolutionFailure;
 import com.jaipilot.cli.classpath.ResolvedSource;
@@ -27,6 +25,8 @@ import java.util.Optional;
 import java.util.Set;
 
 public final class ProjectFileService {
+
+    private static final System.Logger LOGGER = System.getLogger(ProjectFileService.class.getName());
 
     private static final List<Path> JAVA_SOURCE_ROOTS = List.of(
             Path.of("src", "main", "java"),
@@ -239,9 +239,26 @@ public final class ProjectFileService {
     }
 
     public List<String> readRequestedContextSources(Path projectRoot, Path preferredSourcePath, List<String> requestedPaths) {
+        if (requestedPaths == null || requestedPaths.isEmpty()) {
+            return List.of();
+        }
         return requestedPaths.stream()
-                .map(path -> readRequestedContextSource(projectRoot, preferredSourcePath, path))
+                .map(path -> readRequestedContextSourceOrPlaceholder(projectRoot, preferredSourcePath, path))
                 .toList();
+    }
+
+    private String readRequestedContextSourceOrPlaceholder(Path projectRoot, Path preferredSourcePath, String requestedPath) {
+        try {
+            return readRequestedContextSource(projectRoot, preferredSourcePath, requestedPath);
+        } catch (IllegalStateException exception) {
+            LOGGER.log(
+                    System.Logger.Level.WARNING,
+                    "Context source unavailable for {0}; using placeholder. Reason: {1}",
+                    requestedPath,
+                    exception.getMessage()
+            );
+            return "class not found";
+        }
     }
 
     public List<String> readCachedContextEntries(Path projectRoot, List<String> contextPaths) {
@@ -924,17 +941,8 @@ public final class ProjectFileService {
         BuildToolClassResolutionService classResolutionService = new BuildToolClassResolutionService();
         return (projectRoot, moduleRoot, requestedFqcn) -> {
             ResolutionOptions options = new ResolutionOptions(List.of(), false, true);
-            ClassResolutionResult classResult = classResolutionService.locate(
+            Optional<ResolvedSource> resolvedSource = classResolutionService.resolveSourceByFqcn(
                     requestedFqcn,
-                    projectRoot,
-                    moduleRoot,
-                    options
-            );
-            if (classResult.kind() == LocationKind.NOT_FOUND) {
-                return Optional.empty();
-            }
-            Optional<ResolvedSource> resolvedSource = classResolutionService.resolveSource(
-                    classResult,
                     projectRoot,
                     moduleRoot,
                     options
