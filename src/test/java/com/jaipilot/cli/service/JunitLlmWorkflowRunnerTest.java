@@ -32,7 +32,7 @@ class JunitLlmWorkflowRunnerTest {
     Path tempDir;
 
     @Test
-    void runSucceedsWhenGeneratedTestPassesCompilationSanity() throws Exception {
+    void runSucceedsWhenGeneratedTestPassesValidationAndCoverage() throws Exception {
         Path projectRoot = tempDir.resolve("project");
         write(projectRoot.resolve("pom.xml"), "<project/>");
         Path cutPath = write(
@@ -46,6 +46,7 @@ class JunitLlmWorkflowRunnerTest {
                 package com.example;
                 class CrashControllerTest {
                     // PASS
+                    // HIGH_COVERAGE
                 }
                 """));
         JunitLlmWorkflowRunner workflowRunner = newWorkflowRunner(backendClient, new ProjectFileService());
@@ -68,17 +69,18 @@ class JunitLlmWorkflowRunnerTest {
 
         assertEquals("session-1", result.sessionId());
         assertTrue(Files.readString(outputPath).contains("PASS"));
+        assertEquals(1, backendClient.requests.size());
 
         List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
-        assertEquals(2, commandLog.size());
-        assertTrue(commandLog.stream().allMatch(line -> line.contains("test-compile")));
-        assertFalse(commandLog.stream().anyMatch(line -> line.contains("verify")));
-        assertFalse(commandLog.stream().anyMatch(line -> line.contains("jacoco")));
+        assertTrue(commandLog.stream().anyMatch(line -> line.contains("test-compile")));
+        assertTrue(commandLog.stream().anyMatch(line -> line.contains("verify")));
+        assertTrue(commandLog.stream().anyMatch(line -> line.contains("-Dtest=com.example.CrashControllerTest") && line.contains(" test")));
+        assertTrue(commandLog.stream().anyMatch(line -> line.contains("jacoco-maven-plugin:0.8.13:report")));
     }
 
     @Test
-    void runFixesGeneratedTestWhenCompilationFails() throws Exception {
-        Path projectRoot = tempDir.resolve("compile-fix-project");
+    void runFixesGeneratedTestWhenTargetedTestFails() throws Exception {
+        Path projectRoot = tempDir.resolve("targeted-test-fix-project");
         write(projectRoot.resolve("pom.xml"), "<project/>");
         Path cutPath = write(
                 projectRoot.resolve("src/main/java/com/example/CrashController.java"),
@@ -91,13 +93,16 @@ class JunitLlmWorkflowRunnerTest {
                 outputFinal("""
                         package com.example;
                         class CrashControllerTest {
-                            // BUILD_FAIL
+                            // PASS
+                            // TEST_FAIL
+                            // HIGH_COVERAGE
                         }
                         """),
                 outputFinal("""
                         package com.example;
                         class CrashControllerTest {
                             // PASS
+                            // HIGH_COVERAGE
                         }
                         """)
         );
@@ -123,12 +128,67 @@ class JunitLlmWorkflowRunnerTest {
         assertEquals(2, backendClient.requests.size());
         assertEquals("generate", backendClient.requests.get(0).type());
         assertEquals("fix", backendClient.requests.get(1).type());
-        assertTrue(backendClient.requests.get(1).clientLogs().contains("Failed phase: test-compile"));
+        assertTrue(backendClient.requests.get(1).clientLogs().contains("Failed phase: test"));
+        assertTrue(backendClient.requests.get(1).clientLogs().contains("AssertionFailedError: expected: <200> but was: <500>"));
         assertTrue(Files.readString(outputPath).contains("PASS"));
 
         List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
-        assertEquals(3, commandLog.size());
-        assertTrue(commandLog.stream().allMatch(line -> line.contains("test-compile")));
+        assertTrue(commandLog.stream().filter(line -> line.contains("-Dtest=com.example.CrashControllerTest") && line.contains(" test")).count() >= 2);
+    }
+
+    @Test
+    void runImprovesCoverageToReachTarget() throws Exception {
+        Path projectRoot = tempDir.resolve("coverage-improvement-project");
+        write(projectRoot.resolve("pom.xml"), "<project/>");
+        Path cutPath = write(
+                projectRoot.resolve("src/main/java/com/example/CrashController.java"),
+                "package com.example;\npublic class CrashController {}\n"
+        );
+        Path outputPath = projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java");
+        Path fakeMaven = writeFakeMaven(projectRoot);
+
+        StubBackendClient backendClient = new StubBackendClient(
+                outputFinal("""
+                        package com.example;
+                        class CrashControllerTest {
+                            // PASS
+                            // LOW_COVERAGE
+                        }
+                        """),
+                outputFinal("""
+                        package com.example;
+                        class CrashControllerTest {
+                            // PASS
+                            // HIGH_COVERAGE
+                        }
+                        """)
+        );
+        JunitLlmWorkflowRunner workflowRunner = newWorkflowRunner(backendClient, new ProjectFileService());
+
+        JunitLlmSessionResult result = workflowRunner.run(
+                new JunitLlmSessionRequest(
+                        projectRoot,
+                        cutPath,
+                        outputPath,
+                        JunitLlmOperation.GENERATE,
+                        null,
+                        "",
+                        "",
+                        null
+                ),
+                fakeMaven,
+                List.of(),
+                Duration.ofSeconds(10)
+        );
+
+        assertEquals("session-1", result.sessionId());
+        assertEquals(2, backendClient.requests.size());
+        assertEquals("fix", backendClient.requests.get(1).type());
+        assertTrue(backendClient.requests.get(1).clientLogs().contains("Coverage target: 80.00% line coverage."));
+        assertTrue(backendClient.requests.get(1).clientLogs().contains("Current line coverage:"));
+
+        List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
+        assertTrue(commandLog.stream().filter(line -> line.contains("jacoco-maven-plugin:0.8.13:report")).count() >= 2);
     }
 
     @Test
@@ -170,13 +230,10 @@ class JunitLlmWorkflowRunnerTest {
 
         assertTrue(exception.getMessage().contains("Failed phase: preflight-test-compile"));
         assertEquals(0, backendClient.requests.size());
-
-        List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
-        assertEquals(1, commandLog.size());
     }
 
     @Test
-    void runSkipsPostGenerationCompilationWhenTestIsUnchanged() throws Exception {
+    void runSkipsPostGenerationValidationAndCoverageWhenTestIsUnchanged() throws Exception {
         Path projectRoot = tempDir.resolve("unchanged-test-project");
         write(projectRoot.resolve("pom.xml"), "<project/>");
         Path cutPath = write(
@@ -185,7 +242,7 @@ class JunitLlmWorkflowRunnerTest {
         );
         Path outputPath = write(
                 projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java"),
-                "package com.example;\nclass CrashControllerTest { // PASS }\n"
+                "package com.example;\nclass CrashControllerTest { // PASS // HIGH_COVERAGE }\n"
         );
         Path fakeMaven = writeFakeMaven(projectRoot);
 
@@ -210,8 +267,9 @@ class JunitLlmWorkflowRunnerTest {
         );
 
         List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
-        assertEquals(1, commandLog.size());
+        assertEquals(2, commandLog.size());
         assertTrue(commandLog.get(0).contains("test-compile"));
+        assertTrue(commandLog.get(1).contains("verify"));
     }
 
     @Test
@@ -228,7 +286,7 @@ class JunitLlmWorkflowRunnerTest {
         Path outputPath = moduleRoot.resolve("src/test/java/com/example/CrashControllerTest.java");
         Path fakeMaven = writeFakeMaven(projectRoot);
 
-        StubBackendClient backendClient = new StubBackendClient(outputFinal("package com.example; class CrashControllerTest { // PASS }\n"));
+        StubBackendClient backendClient = new StubBackendClient(outputFinal("package com.example; class CrashControllerTest { // PASS // HIGH_COVERAGE }\n"));
         JunitLlmWorkflowRunner workflowRunner = newWorkflowRunner(backendClient, new ProjectFileService());
 
         workflowRunner.run(
@@ -249,8 +307,9 @@ class JunitLlmWorkflowRunnerTest {
 
         assertFalse(Files.exists(projectRoot.resolve("maven-commands.log")));
         List<String> moduleCommandLog = Files.readAllLines(moduleRoot.resolve("maven-commands.log"));
-        assertEquals(2, moduleCommandLog.size());
-        assertTrue(moduleCommandLog.stream().allMatch(line -> line.contains("test-compile")));
+        assertTrue(moduleCommandLog.stream().anyMatch(line -> line.contains("test-compile")));
+        assertTrue(moduleCommandLog.stream().anyMatch(line -> line.contains("verify")));
+        assertTrue(moduleCommandLog.stream().anyMatch(line -> line.contains("jacoco-maven-plugin:0.8.13:report")));
     }
 
     @Test
@@ -266,7 +325,7 @@ class JunitLlmWorkflowRunnerTest {
 
         StubBackendClient backendClient = new StubBackendClient(
                 outputRequiredContext("com/example/Dependency.java"),
-                outputFinal("package com.example; class CrashControllerTest { // PASS }\n")
+                outputFinal("package com.example; class CrashControllerTest { // PASS // HIGH_COVERAGE }\n")
         );
         JunitLlmWorkflowRunner workflowRunner = newWorkflowRunner(backendClient, new ProjectFileService());
 
@@ -288,15 +347,10 @@ class JunitLlmWorkflowRunnerTest {
 
         assertEquals(2, backendClient.requests.size());
         assertEquals(List.of("Class not found"), backendClient.requests.get(1).contextClasses());
-
-        List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
-        assertEquals(2, commandLog.size());
-        assertTrue(commandLog.stream().allMatch(line -> line.contains("test-compile")));
-        assertFalse(commandLog.stream().anyMatch(line -> line.contains("dependency:sources")));
     }
 
     @Test
-    void runIgnoresUserBuildArgsForCompilationSanityAndUsesQuietCompile() throws Exception {
+    void runIgnoresUserBuildArgsForValidationAndUsesQuietBuildArgs() throws Exception {
         Path projectRoot = tempDir.resolve("no-build-args-project");
         write(projectRoot.resolve("pom.xml"), "<project/>");
         Path cutPath = write(
@@ -310,6 +364,7 @@ class JunitLlmWorkflowRunnerTest {
                 package com.example;
                 class CrashControllerTest {
                     // PASS
+                    // HIGH_COVERAGE
                 }
                 """));
         JunitLlmWorkflowRunner workflowRunner = newWorkflowRunner(backendClient, new ProjectFileService());
@@ -331,8 +386,6 @@ class JunitLlmWorkflowRunnerTest {
         );
 
         List<String> commandLog = Files.readAllLines(projectRoot.resolve("maven-commands.log"));
-        assertEquals(2, commandLog.size());
-        assertTrue(commandLog.stream().allMatch(line -> line.contains("test-compile")));
         assertTrue(commandLog.stream().allMatch(line -> line.contains("-q")));
         assertFalse(commandLog.stream().anyMatch(line -> line.contains("-Pprofile-that-should-be-ignored")));
         assertFalse(commandLog.stream().anyMatch(line -> line.contains("-Dfoo=bar")));
@@ -368,38 +421,91 @@ class JunitLlmWorkflowRunnerTest {
                 echo "$*" >> "$LOG_FILE"
 
                 TEST_FILE="$PWD/src/test/java/com/example/CrashControllerTest.java"
+                JACOCO_XML="$PWD/target/site/jacoco/jacoco.xml"
 
-                case "$*" in
-                  *dependency:sources*)
-                    mkdir -p "$PWD/src/main/java/com/example"
-                    if [ ! -f "$PWD/src/main/java/com/example/Dependency.java" ]; then
-                      cat > "$PWD/src/main/java/com/example/Dependency.java" <<SRC
+                if echo "$*" | grep -q "dependency:sources"; then
+                  mkdir -p "$PWD/src/main/java/com/example"
+                  if [ ! -f "$PWD/src/main/java/com/example/Dependency.java" ]; then
+                    cat > "$PWD/src/main/java/com/example/Dependency.java" <<SRC
                 package com.example;
                 public class Dependency {}
                 SRC
-                    fi
-                    echo "dependency sources downloaded"
-                    exit 0
-                    ;;
+                  fi
+                  echo "dependency sources downloaded"
+                  exit 0
+                fi
 
-                  *test-compile*)
-                    if grep -q UNRELATED_BUILD_FAIL "$PWD/src/main/java/com/example/BrokenDependency.java" 2>/dev/null; then
-                      echo "compilation failed due to unrelated project sources"
-                      exit 1
-                    fi
-                    if grep -q BUILD_FAIL "$TEST_FILE" 2>/dev/null; then
-                      echo "compilation failed"
-                      exit 1
-                    fi
-                    echo "compilation ok"
-                    exit 0
-                    ;;
+                if echo "$*" | grep -q "test-compile"; then
+                  if grep -q UNRELATED_BUILD_FAIL "$PWD/src/main/java/com/example/BrokenDependency.java" 2>/dev/null; then
+                    echo "compilation failed due to unrelated project sources"
+                    exit 1
+                  fi
+                  if grep -q BUILD_FAIL "$TEST_FILE" 2>/dev/null; then
+                    echo "compilation failed"
+                    exit 1
+                  fi
+                  echo "compilation ok"
+                  exit 0
+                fi
 
-                  *)
-                    echo "unexpected command: $*"
-                    exit 2
-                    ;;
-                esac
+                if echo "$*" | grep -q " verify"; then
+                  if grep -q UNRELATED_RULE_FAIL "$PWD/src/main/java/com/example/BrokenDependency.java" 2>/dev/null; then
+                    echo "codebase rules failed due to unrelated project sources"
+                    exit 1
+                  fi
+                  if grep -q RULE_FAIL "$TEST_FILE" 2>/dev/null; then
+                    echo "codebase rules failed"
+                    exit 1
+                  fi
+                  echo "rules ok"
+                  exit 0
+                fi
+
+                if echo "$*" | grep -q "jacoco-maven-plugin"; then
+                  if grep -q TEST_FAIL "$TEST_FILE" 2>/dev/null; then
+                    echo "Tests run: 1, Failures: 1"
+                    echo "AssertionFailedError: expected: <200> but was: <500>"
+                    echo "Caused by: java.lang.IllegalStateException: boom"
+                    exit 1
+                  fi
+                  mkdir -p "$(dirname \"$JACOCO_XML\")"
+                  if grep -q LOW_COVERAGE "$TEST_FILE" 2>/dev/null; then
+                    COVERED=3
+                    MISSED=7
+                  elif grep -q MEDIUM_COVERAGE "$TEST_FILE" 2>/dev/null; then
+                    COVERED=7
+                    MISSED=3
+                  else
+                    COVERED=9
+                    MISSED=1
+                  fi
+                  cat > "$JACOCO_XML" <<XML
+                <?xml version=\"1.0\" encoding=\"UTF-8\"?>
+                <report name=\"JAIPilot\">
+                  <package name=\"com/example\">
+                    <sourcefile name=\"CrashController.java\">
+                      <counter type=\"LINE\" missed=\"$MISSED\" covered=\"$COVERED\"/>
+                    </sourcefile>
+                  </package>
+                </report>
+                XML
+                  echo "coverage ok"
+                  exit 0
+                fi
+
+                if echo "$*" | grep -q -- "-Dtest=" && echo "$*" | grep -q " test"; then
+                  if grep -q TEST_FAIL "$TEST_FILE" 2>/dev/null; then
+                    echo "Tests run: 1, Failures: 1"
+                    echo "AssertionFailedError: expected: <200> but was: <500>"
+                    echo "Caused by: java.lang.IllegalStateException: boom"
+                    exit 1
+                  fi
+                  echo "Tests run: 1, Failures: 0"
+                  exit 0
+                fi
+
+                echo "unexpected command: $*"
+                exit 2
                 """);
         boolean executable = fakeMaven.toFile().setExecutable(true);
         assertTrue(executable, "fake Maven script must be executable");
