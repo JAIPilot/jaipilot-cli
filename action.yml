@@ -1,6 +1,7 @@
 name: "JAIPilot Generate and Commit"
-description: "Run jaipilot generate for all non-test Java classes and commit generated tests back to the same branch."
+description: "Run jaipilot generate for changed non-test Java classes and commit generated tests back to the same branch."
 author: "JAIPilot"
+
 branding:
   icon: "check-circle"
   color: "green"
@@ -41,10 +42,10 @@ inputs:
 
 outputs:
   processed-classes:
-    description: "Number of non-test Java classes processed."
+    description: "Number of changed non-test Java classes processed."
     value: ${{ steps.generate.outputs.processed-classes }}
   failed-classes:
-    description: "Number of classes that failed generation."
+    description: "Number of changed classes that failed generation."
     value: ${{ steps.generate.outputs.failed-classes }}
   commit-sha:
     description: "Commit SHA pushed by this action. Empty when no changes were committed."
@@ -66,7 +67,7 @@ runs:
         curl -fsSL "${{ inputs.install-script-url }}" | bash
         echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
 
-    - name: Run jaipilot generate for all non-test Java classes
+    - name: Run jaipilot generate for changed non-test Java classes
       id: generate
       shell: bash
       run: |
@@ -93,23 +94,58 @@ runs:
           exit 1
         fi
 
+        changed_files=""
+
+        if [ -n "${GITHUB_BASE_REF:-}" ]; then
+          echo "Running in pull_request context against base branch: ${GITHUB_BASE_REF}"
+          git fetch --no-tags --depth=1 origin "${GITHUB_BASE_REF}"
+          changed_files="$(git diff --name-only "origin/${GITHUB_BASE_REF}...HEAD")"
+        else
+          echo "Running in push context"
+          if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+            changed_files="$(git diff --name-only HEAD~1 HEAD)"
+          else
+            echo "No previous commit found; using all tracked files in current commit."
+            changed_files="$(git ls-files)"
+          fi
+        fi
+
         mapfile -t java_files < <(
-          find . -type f -name "*.java" \
-            ! -path "*/src/test/*" \
-            ! -name "*Test.java" \
-            ! -name "*Tests.java" \
-            ! -name "*IT.java" \
-            ! -name "*ITCase.java" \
-            | LC_ALL=C sort
+          printf '%s\n' "$changed_files" \
+            | sed '/^$/d' \
+            | grep '\.java$' || true
         )
 
-        if [ "${#java_files[@]}" -eq 0 ]; then
-          echo "No non-test Java classes found."
+        filtered_java_files=()
+        for class_path in "${java_files[@]}"; do
+          case "$class_path" in
+            */src/test/*|*Test.java|*Tests.java|*IT.java|*ITCase.java)
+              continue
+              ;;
+          esac
+
+          if [ ! -f "$class_path" ]; then
+            echo "Skipping missing file: $class_path"
+            continue
+          fi
+
+          filtered_java_files+=("$class_path")
+        done
+
+        if [ "${#filtered_java_files[@]}" -eq 0 ]; then
+          echo "No changed non-test Java classes found."
           echo "processed-classes=0" >> "${GITHUB_OUTPUT}"
           echo "failed-classes=0" >> "${GITHUB_OUTPUT}"
           echo "JAIPILOT_GENERATE_FAILED=0" >> "${GITHUB_ENV}"
           exit 0
         fi
+
+        mapfile -t java_files < <(
+          printf '%s\n' "${filtered_java_files[@]}" | LC_ALL=C sort -u
+        )
+
+        echo "Changed non-test Java classes to process:"
+        printf ' - %s\n' "${java_files[@]}"
 
         processed=0
         failed=0
