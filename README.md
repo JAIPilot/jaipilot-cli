@@ -109,6 +109,16 @@ Pass extra build arguments when needed:
 jaipilot generate src/main/java/org/example/CrashController.java --build-arg -DskipITs
 ```
 
+## GitHub Action (PR Automation)
+
+To run JAIPilot automatically on pull requests with this action, you must provide your JAIPilot license key to the workflow.
+
+1. Go to your repository `Settings` -> `Secrets and variables` -> `Actions`.
+2. Create a repository secret (for example `JAIPILOT_LICENSE_KEY`) and paste your JAIPilot license key as the value.
+3. Reference that secret in your workflow input/env for the JAIPilot action.
+
+Without a valid license key configured in the action, JAIPilot will not auto-execute on PRs.
+
 ## Commands
 
 Authentication commands:
