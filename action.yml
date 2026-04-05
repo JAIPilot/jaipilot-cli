@@ -1,5 +1,5 @@
-name: "JAIPilot Test Generation"
-description: "Automatically generate tests for changed Java production classes and commit the resulting updates to the current branch."
+name: "JAIPilot - Improve test coverage"
+description: "Automatically generate, fix, and commit high-coverage JUnit tests for Java PRs (Maven & Gradle)."
 author: "JAIPilot"
 
 branding:
