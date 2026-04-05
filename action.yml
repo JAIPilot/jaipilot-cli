@@ -1,54 +1,54 @@
-name: "JAIPilot Generate and Commit"
-description: "Run jaipilot generate for changed non-test Java classes and commit generated tests back to the same branch."
+name: "JAIPilot Test Generation"
+description: "Automatically generate tests for changed Java production classes and commit the resulting updates to the current branch."
 author: "JAIPilot"
 
 branding:
-  icon: "check-circle"
-  color: "green"
+  icon: "cpu"
+  color: "blue"
 
 inputs:
   working-directory:
-    description: "Directory where JAIPilot should run."
+    description: "Project directory in which JAIPilot runs."
     required: false
     default: "."
   java-version:
-    description: "Temurin Java version to install."
+    description: "Temurin Java version to install before running JAIPilot."
     required: false
     default: "21"
   install-script-url:
-    description: "Installer script URL for JAIPilot."
+    description: "JAIPilot installer script URL."
     required: false
     default: "https://jaipilot.com/install.sh"
   jaipilot-license-key:
-    description: "JAIPILOT_LICENSE_KEY used for backend-assisted generate."
+    description: "License key used to authenticate JAIPilot generation."
     required: false
     default: ""
   fail-on-generate-error:
-    description: "If true, fail the workflow when one or more classes fail generation."
+    description: "Fail the workflow if generation fails for one or more classes."
     required: false
     default: "true"
   commit-message:
-    description: "Commit message used for generated test changes."
+    description: "Commit message for generated test changes."
     required: false
-    default: "chore: jaipilot generate tests"
+    default: "chore: generate tests with JAIPilot"
   git-user-name:
-    description: "Git author name used for the generated commit."
+    description: "Git author name for the generated commit."
     required: false
     default: "github-actions[bot]"
   git-user-email:
-    description: "Git author email used for the generated commit."
+    description: "Git author email for the generated commit."
     required: false
     default: "41898282+github-actions[bot]@users.noreply.github.com"
 
 outputs:
   processed-classes:
-    description: "Number of changed non-test Java classes processed."
+    description: "Number of changed Java production classes processed."
     value: ${{ steps.generate.outputs.processed-classes }}
   failed-classes:
-    description: "Number of changed classes that failed generation."
+    description: "Number of classes for which generation failed."
     value: ${{ steps.generate.outputs.failed-classes }}
   commit-sha:
-    description: "Commit SHA pushed by this action. Empty when no changes were committed."
+    description: "Commit SHA pushed by this action. Empty if no changes were committed."
     value: ${{ steps.commit.outputs.commit-sha }}
 
 runs:
@@ -67,7 +67,7 @@ runs:
         curl -fsSL "${{ inputs.install-script-url }}" | bash
         echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
 
-    - name: Run jaipilot generate for changed non-test Java classes
+    - name: Generate tests for changed Java production classes
       id: generate
       shell: bash
       run: |
@@ -82,15 +82,15 @@ runs:
 
         if [ -n "${{ inputs.jaipilot-license-key }}" ]; then
           export JAIPILOT_LICENSE_KEY="${{ inputs.jaipilot-license-key }}"
-          # jaipilot generate reads JAIPILOT_JWT_TOKEN today; map license key input to it.
           export JAIPILOT_JWT_TOKEN="${{ inputs.jaipilot-license-key }}"
         fi
+
         if [ -n "${JAIPILOT_LICENSE_KEY:-}" ] && [ -z "${JAIPILOT_JWT_TOKEN:-}" ]; then
-          # Allow callers to provide JAIPILOT_LICENSE_KEY directly at workflow level.
           export JAIPILOT_JWT_TOKEN="${JAIPILOT_LICENSE_KEY}"
         fi
+
         if [ -z "${JAIPILOT_JWT_TOKEN:-}" ]; then
-          echo "Missing JAIPILOT_LICENSE_KEY. Set input 'jaipilot-license-key' or JAIPILOT_LICENSE_KEY env var." >&2
+          echo "Missing JAIPILOT_LICENSE_KEY. Set the 'jaipilot-license-key' input or define JAIPILOT_LICENSE_KEY as an environment variable." >&2
           exit 1
         fi
 
@@ -105,7 +105,7 @@ runs:
           if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
             changed_files="$(git diff --name-only HEAD~1 HEAD)"
           else
-            echo "No previous commit found; using all tracked files in current commit."
+            echo "No previous commit found; using all tracked files in the current commit."
             changed_files="$(git ls-files)"
           fi
         fi
@@ -133,7 +133,7 @@ runs:
         done
 
         if [ "${#filtered_java_files[@]}" -eq 0 ]; then
-          echo "No changed non-test Java classes found."
+          echo "No changed Java production classes found."
           echo "processed-classes=0" >> "${GITHUB_OUTPUT}"
           echo "failed-classes=0" >> "${GITHUB_OUTPUT}"
           echo "JAIPILOT_GENERATE_FAILED=0" >> "${GITHUB_ENV}"
@@ -144,7 +144,7 @@ runs:
           printf '%s\n' "${filtered_java_files[@]}" | LC_ALL=C sort -u
         )
 
-        echo "Changed non-test Java classes to process:"
+        echo "Changed Java production classes to process:"
         printf ' - %s\n' "${java_files[@]}"
 
         processed=0
@@ -192,20 +192,20 @@ runs:
 
         target_branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
         if [ -z "$target_branch" ]; then
-          echo "Unable to detect target branch (GITHUB_HEAD_REF/GITHUB_REF_NAME empty)." >&2
+          echo "Unable to detect target branch (GITHUB_HEAD_REF/GITHUB_REF_NAME is empty)." >&2
           exit 1
         fi
 
         git push origin "HEAD:${target_branch}"
         echo "commit-sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
-    - name: Fail when generation errors occurred
+    - name: Fail if generation errors occurred
       if: ${{ inputs.fail-on-generate-error == 'true' }}
       shell: bash
       run: |
         set -euo pipefail
         failed="${JAIPILOT_GENERATE_FAILED:-0}"
         if [ "$failed" -gt 0 ]; then
-          echo "jaipilot generate failed for $failed classes." >&2
+          echo "JAIPilot generation failed for $failed classes." >&2
           exit 1
         fi
