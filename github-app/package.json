@@ -1,21 +1,18 @@
 {
-  "name": "jaipilot-github-app",
-  "version": "0.1.0",
+  "name": "starter_github_app",
   "private": true,
-  "description": "GitHub App that bootstraps and optionally dispatches JAIPilot workflows.",
+  "version": "0.0.1",
   "type": "module",
-  "engines": {
-    "node": ">=20"
-  },
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
-    "check": "node --check src/index.js",
-    "test": "node --test src/workflow-template.test.js"
+    "server": "node app.js",
+    "lint": "standard"
+  },
+  "devDependencies": {
+    "smee-client": "^2.0.1",
+    "standard": "^17.0.0"
   },
   "dependencies": {
-    "@octokit/webhooks": "^13.6.1",
-    "dotenv": "^16.4.5",
-    "octokit": "^4.0.2"
+    "dotenv": "^16.0.3",
+    "octokit": "^4.1.1"
   }
 }
