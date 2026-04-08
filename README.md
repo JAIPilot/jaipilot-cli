@@ -75,10 +75,10 @@ You can use JAIPilot in either of these ways:
 
 ## Quick Start
 
-Authenticate once:
+Set your JAIPilot license key:
 
 ```sh
-jaipilot login
+export JAIPILOT_LICENSE_KEY="your-license-key"
 ```
 
 Get your license key by logging in at `https://jaipilot.com` (free credits are available).
@@ -103,13 +103,7 @@ jaipilot generate src/main/java/org/example/CrashController.java --build-arg -Ds
 
 ## Commands
 
-Authentication commands:
-
-- `jaipilot login` starts the browser flow and stores credentials in `~/.config/jaipilot/credentials.json`.
-- `jaipilot status` shows the current signed-in user and refreshes the access token if needed.
-- `jaipilot logout` clears the stored session.
-
-Generation commands:
+JAIPilot CLI exposes only one command:
 
 - `jaipilot generate <path-to-class>` generates or updates a corresponding test file.
 

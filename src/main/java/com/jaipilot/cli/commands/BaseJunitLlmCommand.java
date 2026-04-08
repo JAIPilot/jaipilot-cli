@@ -1,8 +1,6 @@
 package com.jaipilot.cli.commands;
 
 import com.jaipilot.cli.JaipilotEndpointConfig;
-import com.jaipilot.cli.auth.AuthService;
-import com.jaipilot.cli.auth.CredentialsStore;
 import com.jaipilot.cli.backend.HttpJunitLlmBackendClient;
 import com.jaipilot.cli.backend.JunitLlmBackendClient;
 import com.jaipilot.cli.files.ProjectFileService;
@@ -64,19 +62,13 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
     private CommandSpec spec;
 
     private final ProjectFileService fileService;
-    private final AuthService authService;
 
     BaseJunitLlmCommand() {
-        this(new ProjectFileService(), new AuthService(new CredentialsStore()));
+        this(new ProjectFileService());
     }
 
     BaseJunitLlmCommand(ProjectFileService fileService) {
-        this(fileService, new AuthService(new CredentialsStore()));
-    }
-
-    BaseJunitLlmCommand(ProjectFileService fileService, AuthService authService) {
         this.fileService = fileService;
-        this.authService = authService;
     }
 
     @Override
@@ -101,7 +93,7 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
 
             JunitLlmBackendClient backendClient = new HttpJunitLlmBackendClient(
                     JaipilotEndpointConfig.resolveBackendUrl(),
-                    resolveJwtToken()
+                    resolveLicenseKey()
             );
             JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
                     backendClient,
@@ -167,15 +159,15 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
         }
     }
 
-    private String resolveJwtToken() {
-        String effectiveToken = firstNonBlank(System.getenv("JAIPILOT_JWT_TOKEN"), authService.ensureFreshAccessToken());
-        if (effectiveToken == null) {
+    private String resolveLicenseKey() {
+        String licenseKey = firstNonBlank(System.getenv("JAIPILOT_LICENSE_KEY"));
+        if (licenseKey == null) {
             throw new CommandLine.ParameterException(
                     spec.commandLine(),
-                    "Set JAIPILOT_JWT_TOKEN or run `jaipilot login`."
+                    "Set JAIPILOT_LICENSE_KEY."
             );
         }
-        return effectiveToken;
+        return licenseKey;
     }
 
     private Path inferProjectRoot(Path workingDirectory, Path resolvedCutPath) {
@@ -186,8 +178,8 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
         return inferredProjectRoot != null ? inferredProjectRoot : workingDirectory;
     }
 
-    private static String firstNonBlank(String primary, String fallback) {
-        for (String value : new String[] {primary, fallback}) {
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
             if (value != null && !value.isBlank()) {
                 return value;
             }

@@ -20,9 +20,8 @@ inputs:
     required: false
     default: "https://jaipilot.com/install.sh"
   jaipilot-license-key:
-    description: "License key used to authenticate JAIPilot generation."
-    required: false
-    default: ""
+    description: "JAIPilot license key. Store it as the JAIPILOT_LICENSE_KEY repository secret."
+    required: true
   fail-on-generate-error:
     description: "Fail the workflow if generation fails for one or more classes."
     required: false
@@ -82,14 +81,9 @@ runs:
 
         if [ -n "${{ inputs.jaipilot-license-key }}" ]; then
           export JAIPILOT_LICENSE_KEY="${{ inputs.jaipilot-license-key }}"
-          export JAIPILOT_JWT_TOKEN="${{ inputs.jaipilot-license-key }}"
         fi
 
-        if [ -n "${JAIPILOT_LICENSE_KEY:-}" ] && [ -z "${JAIPILOT_JWT_TOKEN:-}" ]; then
-          export JAIPILOT_JWT_TOKEN="${JAIPILOT_LICENSE_KEY}"
-        fi
-
-        if [ -z "${JAIPILOT_JWT_TOKEN:-}" ]; then
+        if [ -z "${JAIPILOT_LICENSE_KEY:-}" ]; then
           echo "Missing JAIPILOT_LICENSE_KEY. Set the 'jaipilot-license-key' input or define JAIPILOT_LICENSE_KEY as an environment variable." >&2
           exit 1
         fi

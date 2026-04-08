@@ -1,12 +1,6 @@
 package com.jaipilot.cli;
 
 import com.jaipilot.cli.commands.GenerateCommand;
-import com.jaipilot.cli.commands.LoginCommand;
-import com.jaipilot.cli.commands.LogoutCommand;
-import com.jaipilot.cli.commands.StatusCommand;
-import com.jaipilot.cli.commands.UpdateCommand;
-import com.jaipilot.cli.update.UpdateBootstrap;
-import java.io.PrintWriter;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -19,10 +13,6 @@ import picocli.CommandLine.Model.CommandSpec;
         versionProvider = JaiPilotVersionProvider.class,
         description = "Runs backend-assisted JUnit generation workflows.",
         subcommands = {
-            LoginCommand.class,
-            LogoutCommand.class,
-            StatusCommand.class,
-            UpdateCommand.class,
             GenerateCommand.class
         }
 )
@@ -32,7 +22,6 @@ public final class JaiPilotCli implements Callable<Integer> {
     private CommandSpec spec;
 
     public static void main(String[] args) {
-        UpdateBootstrap.maybeRun(args, new PrintWriter(System.err, true));
         int exitCode = new CommandLine(new JaiPilotCli()).execute(args);
         System.exit(exitCode);
     }

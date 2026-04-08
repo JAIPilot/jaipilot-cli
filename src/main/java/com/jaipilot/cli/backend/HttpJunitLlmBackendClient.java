@@ -36,15 +36,15 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
     private final CurlHttpClient curlHttpClient;
     private final ObjectMapper objectMapper;
     private final String backendUrl;
-    private final String jwtToken;
+    private final String licenseKey;
     private final SleepStrategy sleepStrategy;
 
-    public HttpJunitLlmBackendClient(String backendUrl, String jwtToken) {
+    public HttpJunitLlmBackendClient(String backendUrl, String licenseKey) {
         this(
                 new CurlHttpClient(),
                 OBJECT_MAPPER,
                 backendUrl,
-                jwtToken,
+                licenseKey,
                 Thread::sleep
         );
     }
@@ -53,28 +53,19 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
             CurlHttpClient curlHttpClient,
             ObjectMapper objectMapper,
             String backendUrl,
-            String jwtToken
-    ) {
-        this(curlHttpClient, objectMapper, backendUrl, jwtToken, Thread::sleep);
-    }
-
-    HttpJunitLlmBackendClient(
-            CurlHttpClient curlHttpClient,
-            ObjectMapper objectMapper,
-            String backendUrl,
-            String jwtToken,
+            String licenseKey,
             SleepStrategy sleepStrategy
     ) {
         if (backendUrl == null || backendUrl.isBlank()) {
             throw new IllegalArgumentException("backendUrl is required");
         }
-        if (jwtToken == null || jwtToken.isBlank()) {
-            throw new IllegalArgumentException("jwtToken is required");
+        if (licenseKey == null || licenseKey.isBlank()) {
+            throw new IllegalArgumentException("licenseKey is required");
         }
         this.curlHttpClient = Objects.requireNonNull(curlHttpClient, "curlHttpClient");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.backendUrl = trimTrailingSlash(backendUrl);
-        this.jwtToken = jwtToken.trim();
+        this.licenseKey = licenseKey.trim();
         this.sleepStrategy = Objects.requireNonNull(sleepStrategy, "sleepStrategy");
     }
 
@@ -90,7 +81,7 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
                     "POST",
                     Map.of(
                             "Accept", "application/json",
-                            "Authorization", "Bearer " + jwtToken,
+                            "Authorization", "Bearer " + licenseKey,
                             "Content-Type", "application/json"
                     ),
                     body,
@@ -117,7 +108,7 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
                     "GET",
                     Map.of(
                             "Accept", "application/json",
-                            "Authorization", "Bearer " + jwtToken
+                            "Authorization", "Bearer " + licenseKey
                     ),
                     null,
                     Duration.ofSeconds(30)
