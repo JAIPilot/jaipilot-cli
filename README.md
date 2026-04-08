@@ -89,18 +89,6 @@ Generate a JUnit test for a class:
 jaipilot generate src/main/java/org/example/CrashController.java
 ```
 
-Use a specific build executable:
-
-```sh
-jaipilot generate src/main/java/org/example/CrashController.java --build-executable /path/to/mvn
-```
-
-Pass extra build arguments when needed:
-
-```sh
-jaipilot generate src/main/java/org/example/CrashController.java --build-arg -DskipITs
-```
-
 ## Commands
 
 JAIPilot CLI exposes only one command:

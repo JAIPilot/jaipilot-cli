@@ -37,7 +37,6 @@
         <junit.version>5.11.4</junit.version>
         <maven.invoker.version>3.3.0</maven.invoker.version>
         <gradle.tooling.api.version>7.3-20210825160000+0000</gradle.tooling.api.version>
-        <cfr.version>0.152</cfr.version>
         <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
         <maven.surefire.plugin.version>3.5.2</maven.surefire.plugin.version>
         <maven.jar.plugin.version>3.4.2</maven.jar.plugin.version>
@@ -75,12 +74,6 @@
             <groupId>org.gradle</groupId>
             <artifactId>gradle-tooling-api</artifactId>
             <version>${gradle.tooling.api.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>org.benf</groupId>
-            <artifactId>cfr</artifactId>
-            <version>${cfr.version}</version>
         </dependency>
 
         <dependency>

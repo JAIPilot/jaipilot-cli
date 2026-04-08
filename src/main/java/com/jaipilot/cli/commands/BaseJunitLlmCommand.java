@@ -19,44 +19,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Option;
 import picocli.CommandLine.Spec;
 
 abstract class BaseJunitLlmCommand implements Callable<Integer> {
 
-    @Option(
-            names = "--output",
-            paramLabel = "<path>",
-            description = "Output test file path. Defaults to the inferred test file."
-    )
-    private Path outputPath;
-
-    @Option(
-            names = {"--build-executable", "--maven-executable", "--gradle-executable"},
-            paramLabel = "<path>",
-            description = "Explicit build executable or wrapper path. Defaults to ./mvnw or ./gradlew from the project root, then mvn or gradle."
-    )
-    private Path buildExecutable;
-
-    @Option(
-            names = {"--build-arg", "--maven-arg", "--gradle-arg"},
-            paramLabel = "<arg>",
-            description = "Additional argument passed to the local build during validation. Repeat to supply multiple arguments."
-    )
-    private List<String> additionalBuildArgs = new ArrayList<>();
-
-    @Option(
-            names = "--timeout-seconds",
-            defaultValue = "600",
-            paramLabel = "<seconds>",
-            description = "Maximum time to wait for each local build phase. Default: ${DEFAULT-VALUE}."
-    )
-    private long timeoutSeconds;
+    private static final Duration GENERATE_TIMEOUT = Duration.ofSeconds(600);
 
     @Spec
     private CommandSpec spec;
@@ -80,13 +51,10 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
         Instant startedAt = Instant.now();
 
         try {
-            validate();
             Path workingDirectory = Path.of("").toAbsolutePath().normalize();
             Path resolvedCutPath = resolveCutPath(workingDirectory);
             Path normalizedProjectRoot = inferProjectRoot(workingDirectory, resolvedCutPath);
-            Path resolvedOutputPath = outputPath == null
-                    ? defaultOutputPath(workingDirectory, normalizedProjectRoot, resolvedCutPath)
-                    : fileService.resolvePath(normalizedProjectRoot, outputPath);
+            Path resolvedOutputPath = defaultOutputPath(workingDirectory, normalizedProjectRoot, resolvedCutPath);
             String initialOutputContent = Files.isRegularFile(resolvedOutputPath)
                     ? fileService.readFile(resolvedOutputPath)
                     : "";
@@ -120,9 +88,9 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
                     "",
                     null
             ),
-                    buildExecutable,
-                    List.copyOf(additionalBuildArgs),
-                    Duration.ofSeconds(timeoutSeconds)
+                    null,
+                    List.of(),
+                    GENERATE_TIMEOUT
             );
 
             consoleLogger.announceTestFile(result.outputPath());
@@ -148,15 +116,6 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
 
     protected final ProjectFileService fileService() {
         return fileService;
-    }
-
-    private void validate() {
-        if (timeoutSeconds < 1) {
-            throw new CommandLine.ParameterException(
-                    spec.commandLine(),
-                    "--timeout-seconds must be greater than zero."
-            );
-        }
     }
 
     private String resolveLicenseKey() {

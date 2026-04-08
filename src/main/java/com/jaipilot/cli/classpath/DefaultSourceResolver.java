@@ -16,19 +16,9 @@ public final class DefaultSourceResolver implements SourceResolver {
     private static final System.Logger LOGGER = System.getLogger(DefaultSourceResolver.class.getName());
 
     private final Path moduleRoot;
-    private final CfrDecompiler cfrDecompiler;
 
-    public DefaultSourceResolver(Path projectRoot, Path moduleRoot) {
-        this(projectRoot, moduleRoot, new CfrDecompiler());
-    }
-
-    DefaultSourceResolver(
-            Path projectRoot,
-            Path moduleRoot,
-            CfrDecompiler cfrDecompiler
-    ) {
+    public DefaultSourceResolver(Path moduleRoot) {
         this.moduleRoot = moduleRoot == null ? null : moduleRoot.toAbsolutePath().normalize();
-        this.cfrDecompiler = cfrDecompiler;
     }
 
     @Override
@@ -62,7 +52,7 @@ public final class DefaultSourceResolver implements SourceResolver {
             return sourceJarSource;
         }
 
-        return resolveDecompiledSource(classResult, options);
+        return Optional.empty();
     }
 
     private Optional<ResolvedSource> resolveWorkspaceSource(ClassResolutionResult classResult) {
@@ -110,20 +100,6 @@ public final class DefaultSourceResolver implements SourceResolver {
                 sourceJar,
                 sourceText.get()
         ));
-    }
-
-    private Optional<ResolvedSource> resolveDecompiledSource(ClassResolutionResult classResult, ResolutionOptions options) {
-        if (classResult.kind() == LocationKind.EXTERNAL_JAR && !options.resolveExternalSources()) {
-            return Optional.empty();
-        }
-
-        return cfrDecompiler.decompile(classResult.containerPath(), classResult.classEntryPath())
-                .map(sourceText -> new ResolvedSource(
-                        classResult.fqcn(),
-                        SourceOrigin.DECOMPILED_CLASS,
-                        classResult.containerPath(),
-                        sourceText
-                ));
     }
 
     private String readFile(Path sourcePath) {

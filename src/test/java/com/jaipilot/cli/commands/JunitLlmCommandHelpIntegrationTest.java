@@ -13,15 +13,15 @@ import picocli.CommandLine;
 class JunitLlmCommandHelpIntegrationTest {
 
     @Test
-    void generateHelpOnlyShowsInferredFriendlyOptions() {
+    void generateHelpShowsNoCustomCommandOptions() {
         String helpOutput = executeHelp("generate");
 
-        assertTrue(helpOutput.contains("--output"));
-        assertTrue(helpOutput.contains("--build-executable"));
-        assertTrue(helpOutput.contains("--build-arg"));
-        assertTrue(helpOutput.contains("--maven-executable"));
-        assertTrue(helpOutput.contains("--gradle-executable"));
-        assertTrue(helpOutput.contains("--timeout-seconds"));
+        assertFalse(helpOutput.contains("--output"));
+        assertFalse(helpOutput.contains("--build-executable"));
+        assertFalse(helpOutput.contains("--build-arg"));
+        assertFalse(helpOutput.contains("--maven-executable"));
+        assertFalse(helpOutput.contains("--gradle-executable"));
+        assertFalse(helpOutput.contains("--timeout-seconds"));
         assertFalse(helpOutput.contains("--attempt-number"));
         assertFalse(helpOutput.contains("--backend-url"));
         assertFalse(helpOutput.contains("--cached-context"));

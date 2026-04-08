@@ -198,7 +198,7 @@ class BuildToolClassResolutionServiceTest {
     }
 
     @Test
-    void resolveSourceByFqcnFallsBackToDecompilationFromWorkspaceClassOutput() throws Exception {
+    void resolveSourceByFqcnReturnsEmptyWhenWorkspaceSourceIsMissing() throws Exception {
         Path projectRoot = tempDir.resolve("repo");
         Path moduleRoot = projectRoot;
         Files.createDirectories(projectRoot);
@@ -228,7 +228,7 @@ class BuildToolClassResolutionServiceTest {
                 List.of(),
                 List.of(moduleRoot.resolve("src/main/java")),
                 List.of(moduleRoot.resolve("src/test/java")),
-                "workspace-decompile-fingerprint"
+                "workspace-missing-source-fingerprint"
         );
 
         BuildToolClassResolutionService service = new BuildToolClassResolutionService(
@@ -244,10 +244,7 @@ class BuildToolClassResolutionServiceTest {
                 new ResolutionOptions(List.of(), false, true)
         );
 
-        assertTrue(resolved.isPresent());
-        assertEquals(SourceOrigin.DECOMPILED_CLASS, resolved.get().origin());
-        assertTrue(resolved.get().sourceText().contains("class Widget"));
-        assertTrue(resolved.get().sourceText().contains("return \"ok\""));
+        assertTrue(resolved.isEmpty());
     }
 
     private BuildToolClasspathResolver stubClasspathResolver(ResolvedClasspath classpath) {

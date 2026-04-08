@@ -99,7 +99,7 @@ public final class BuildToolClassResolutionService {
             Path moduleRoot,
             ResolutionOptions options
     ) {
-        return new DefaultSourceResolver(projectRoot, moduleRoot).resolveSource(classResult, options);
+        return new DefaultSourceResolver(moduleRoot).resolveSource(classResult, options);
     }
 
     public ResolvedSource resolveSourceOrThrow(
