@@ -16,10 +16,6 @@
   <p>
     <a href="#quick-start"><strong>Quick Start</strong></a>
     ·
-    <a href="#inputs"><strong>Inputs</strong></a>
-    ·
-    <a href="#outputs"><strong>Outputs</strong></a>
-    ·
     <a href="#how-it-works"><strong>How It Works</strong></a>
   </p>
 </div>
@@ -73,27 +69,6 @@ jobs:
         with:
           jaipilot-license-key: ${{ secrets.JAIPILOT_LICENSE_KEY }}
 ```
-
-## Inputs
-
-| Input | Required | Default | Description |
-| --- | --- | --- | --- |
-| `working-directory` | No | `.` | Project directory where the action runs. |
-| `java-version` | No | `21` | Temurin Java version to install before generation. |
-| `install-script-url` | No | `https://jaipilot.com/install.sh` | Installer script URL used by the action. |
-| `jaipilot-license-key` | Yes | - | JAIPilot license key used to authorize generation. |
-| `fail-on-generate-error` | No | `true` | Fail the workflow if one or more classes fail generation. |
-| `commit-message` | No | `chore: generate tests with JAIPilot` | Commit message for generated test changes. |
-| `git-user-name` | No | `github-actions[bot]` | Git author name for generated commit. |
-| `git-user-email` | No | `41898282+github-actions[bot]@users.noreply.github.com` | Git author email for generated commit. |
-
-## Outputs
-
-| Output | Description |
-| --- | --- |
-| `processed-classes` | Number of changed Java production classes processed. |
-| `failed-classes` | Number of classes for which generation failed. |
-| `commit-sha` | Commit SHA pushed by the action; empty when no changes were committed. |
 
 ## How It Works
 
