@@ -3,13 +3,10 @@ name: Publish Action
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: "Semantic version without prefix (example: 1.0.0)"
-        required: true
-      update_major_tag:
-        description: "Also update moving major tag (action-v1, action-v2, ...)"
+      release_tag:
+        description: "Rolling action tag to update (example: action-v1)"
         required: false
-        default: "true"
+        default: "action-v1"
 
 jobs:
   publish:
@@ -23,28 +20,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate version and compute tags
+      - name: Validate and compute tag
         id: vars
         shell: bash
         run: |
           set -euo pipefail
 
-          version="${{ inputs.version }}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid version '$version'. Use semantic version format x.y.z." >&2
+          release_tag="${{ inputs.release_tag }}"
+          if [[ -z "$release_tag" ]]; then
+            release_tag="action-v1"
+          fi
+
+          if [[ ! "$release_tag" =~ ^action-v[0-9]+$ ]]; then
+            echo "Invalid release tag '$release_tag'. Use format action-v<major> (example: action-v1)." >&2
             exit 1
           fi
 
-          full_tag="action-v${version}"
-          major_tag="action-v${version%%.*}"
-
-          if git rev-parse "$full_tag" >/dev/null 2>&1; then
-            echo "Tag already exists: $full_tag" >&2
-            exit 1
-          fi
-
-          echo "full_tag=$full_tag" >> "$GITHUB_OUTPUT"
-          echo "major_tag=$major_tag" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
 
       - name: Configure git user
         shell: bash
@@ -53,27 +45,29 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Create immutable release tag
+      - name: Update rolling release tag
         shell: bash
         run: |
           set -euo pipefail
-          git tag -a "${{ steps.vars.outputs.full_tag }}" -m "Action release ${{ steps.vars.outputs.full_tag }}"
-          git push origin "${{ steps.vars.outputs.full_tag }}"
+          git tag -fa "${{ steps.vars.outputs.release_tag }}" -m "Action release ${{ steps.vars.outputs.release_tag }}"
+          git push origin "${{ steps.vars.outputs.release_tag }}" --force
 
-      - name: Update major moving tag
-        if: ${{ inputs.update_major_tag == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          git tag -fa "${{ steps.vars.outputs.major_tag }}" -m "Action major tag -> ${{ steps.vars.outputs.full_tag }}"
-          git push origin "${{ steps.vars.outputs.major_tag }}" --force
-
-      - name: Create GitHub release
+      - name: Upsert GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "${{ steps.vars.outputs.full_tag }}" \
-            --title "JAIPilot Action ${{ steps.vars.outputs.full_tag }}" \
-            --notes "Release of JAIPilot GitHub Action."
+          release_tag="${{ steps.vars.outputs.release_tag }}"
+          release_title="JAIPilot Action ${release_tag}"
+          release_notes="Rolling release for ${release_tag}. Updated from commit ${GITHUB_SHA::7} on $(date -u +'%Y-%m-%d %H:%M:%S UTC')."
+
+          if gh release view "$release_tag" >/dev/null 2>&1; then
+            gh release edit "$release_tag" \
+              --title "$release_title" \
+              --notes "$release_notes"
+          else
+            gh release create "$release_tag" \
+              --title "$release_title" \
+              --notes "$release_notes"
+          fi

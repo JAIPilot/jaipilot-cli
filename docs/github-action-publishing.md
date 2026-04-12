@@ -61,24 +61,23 @@ The action automatically:
 - commits generated test changes
 - pushes the commit back to the same branch that triggered the workflow
 
-## Publish a new action release
+## Publish the rolling action release
 
 1. Open Actions tab.
 2. Run `Publish Action` workflow manually.
-3. Pass version in `x.y.z` format (for example, `1.0.0`).
+3. Keep `release_tag` as `action-v1` (or set another major channel like `action-v2`).
 
 The workflow will:
 
-- create immutable tag `action-vx.y.z`
-- optionally update moving major tag `action-vx`
-- create a GitHub Release for `action-vx.y.z`
+- force-update the rolling tag (default: `action-v1`) to the latest commit
+- create the GitHub Release the first time, then update that same release on later publishes
 
 ## Publish in GitHub Marketplace
 
 1. Ensure repository is public.
-2. Open your release tag page (`action-vx.y.z`).
+2. Open your release tag page (`action-v1` by default).
 3. Publish the action to Marketplace from the release flow.
-4. Keep users pinned to the major tag (`@action-v1`).
+4. Keep users pinned to the same major tag (`@action-v1`).
 
 ## Why tags are prefixed with `action-`
 
