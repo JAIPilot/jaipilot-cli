@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/jaipilot-logo.svg" alt="JAIPilot logo" width="320" />
+  <img src="docs/assets/jaipilot-logo.svg" alt="JAIPilot logo" width="160" />
   <h1>JAIPilot GitHub Action</h1>
   <p><strong>Automatically generate high-coverage Java unit tests on every pull request.</strong></p>
   <p>
