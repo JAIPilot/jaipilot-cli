@@ -3,7 +3,7 @@ description: "Achieve 80%+ unit test coverage on every PR by automatically gener
 author: "JAIPilot"
 
 branding:
-  icon: "cpu"
+  icon: "shield"
   color: "blue"
 
 inputs:

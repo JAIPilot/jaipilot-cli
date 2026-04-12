@@ -27,6 +27,24 @@ class JunitLlmSessionRunnerTest {
 
     @Test
     void runResubmitsRequestedContextWritesFinalTestFileAndOverwritesUsedContextCache() throws Exception {
+        write(
+                "pom.xml",
+                """
+                <project>
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>com.example</groupId>
+                  <artifactId>demo</artifactId>
+                  <version>1.0.0</version>
+                  <dependencies>
+                    <dependency>
+                      <groupId>org.mockito</groupId>
+                      <artifactId>mockito-core</artifactId>
+                      <version>5.9.0</version>
+                    </dependency>
+                  </dependencies>
+                </project>
+                """
+        );
         Path cutPath = write(
                 "src/main/java/com/example/CrashController.java",
                 """
@@ -103,7 +121,7 @@ class JunitLlmSessionRunnerTest {
         assertEquals(2, backendClient.requests.size());
         assertEquals("CrashController", backendClient.requests.get(0).cutName());
         assertEquals("CrashControllerTest", backendClient.requests.get(0).testClassName());
-        assertEquals("5.11.0", backendClient.requests.get(0).mockitoVersion());
+        assertEquals("5.9.0", backendClient.requests.get(0).mockitoVersion());
         assertEquals(
                 List.of(
                         "com/example/support/Helper.java =\npackage com.example.support;\n\npublic class Helper {\n}\n",

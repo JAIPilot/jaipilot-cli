@@ -2,18 +2,9 @@ package com.jaipilot.cli;
 
 public final class JaipilotEndpointConfig {
 
-    public static final String DEFAULT_WEBSITE_BASE = "https://www.jaipilot.com";
     public static final String DEFAULT_BACKEND_URL = "https://otxfylhjrlaesjagfhfi.supabase.co";
 
     private JaipilotEndpointConfig() {
-    }
-
-    public static String resolveWebsiteBase() {
-        return trimTrailingSlash(firstNonBlank(
-                System.getenv("JAIPILOT_WEBSITE_BASE"),
-                System.getProperty("jaipilot.website.base"),
-                DEFAULT_WEBSITE_BASE
-        ));
     }
 
     public static String resolveBackendUrl() {

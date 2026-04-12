@@ -95,7 +95,6 @@ public final class BuildToolClassResolutionService {
 
     public Optional<ResolvedSource> resolveSource(
             ClassResolutionResult classResult,
-            Path projectRoot,
             Path moduleRoot,
             ResolutionOptions options
     ) {
@@ -104,11 +103,10 @@ public final class BuildToolClassResolutionService {
 
     public ResolvedSource resolveSourceOrThrow(
             ClassResolutionResult classResult,
-            Path projectRoot,
             Path moduleRoot,
             ResolutionOptions options
     ) {
-        return resolveSource(classResult, projectRoot, moduleRoot, options)
+        return resolveSource(classResult, moduleRoot, options)
                 .orElseThrow(() -> new ClasspathResolutionException(new ResolutionFailure(
                         ResolutionFailureCategory.SOURCE_NOT_AVAILABLE,
                         null,
@@ -156,7 +154,7 @@ public final class BuildToolClassResolutionService {
             if (classResult.kind() == LocationKind.NOT_FOUND) {
                 continue;
             }
-            Optional<ResolvedSource> resolved = resolveSource(classResult, projectRoot, moduleRoot, normalizedOptions);
+            Optional<ResolvedSource> resolved = resolveSource(classResult, moduleRoot, normalizedOptions);
             if (resolved.isPresent()) {
                 return resolved;
             }

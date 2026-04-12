@@ -232,7 +232,7 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
         putString(root, "type", request.type());
         putString(root, "cutName", request.cutName());
         putString(root, "testClassName", request.testClassName());
-        putString(root, "mockitoVersion", request.mockitoVersion());
+        putOptionalString(root, "mockitoVersion", request.mockitoVersion());
         putString(root, "cutCode", request.cutCode());
         putStringArray(root, "cachedContextClasses", request.cachedContextClasses());
         putString(root, "initialTestClassCode", request.initialTestClassCode());

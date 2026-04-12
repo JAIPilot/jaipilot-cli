@@ -90,6 +90,36 @@ class HttpJunitLlmBackendClientTest {
     }
 
     @Test
+    void invokeOmitsMockitoVersionWhenAbsent() throws Exception {
+        AtomicReference<String> requestBody = new AtomicReference<>();
+
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/functions/v1/invoke-junit-llm-cli", exchange -> {
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            writeJson(exchange, "{\"jobId\":\"job-1\",\"sessionId\":\"session-1\"}");
+        });
+        server.start();
+
+        HttpJunitLlmBackendClient client = new HttpJunitLlmBackendClient(baseUrl(), "token-123");
+
+        client.invoke(new InvokeJunitLlmRequest(
+                null,
+                "generate",
+                "CrashController",
+                "CrashControllerTest",
+                null,
+                "class body",
+                List.of(),
+                "",
+                List.of(),
+                "",
+                null
+        ));
+
+        assertFalse(requestBody.get().contains("\"mockitoVersion\""));
+    }
+
+    @Test
     void fetchJobUsesExpectedQueryParameter() throws Exception {
         AtomicReference<String> query = new AtomicReference<>();
 

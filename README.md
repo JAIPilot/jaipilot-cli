@@ -1,6 +1,7 @@
 <div align="center">
-  <h1>JAIPilot - Autogenerate High Coverage Java Unit Tests</h1>
-  <p><strong>JAIPilot automatically writes high quality unit tests for your PR to achieve high coverage for Java codebases.</strong></p>
+  <img src="docs/assets/jaipilot-logo.svg" alt="JAIPilot logo" width="320" />
+  <h1>JAIPilot GitHub Action</h1>
+  <p><strong>Automatically generate high-coverage Java unit tests on every pull request.</strong></p>
   <p>
     <a href="https://github.com/JAIPilot/jaipilot-cli/actions/workflows/ci.yml">
       <img src="https://github.com/JAIPilot/jaipilot-cli/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI">
@@ -13,95 +14,98 @@
     </a>
   </p>
   <p>
-    <a href="#install"><strong>Install</strong></a>
-    ·
     <a href="#quick-start"><strong>Quick Start</strong></a>
+    ·
+    <a href="#inputs"><strong>Inputs</strong></a>
+    ·
+    <a href="#outputs"><strong>Outputs</strong></a>
     ·
     <a href="#how-it-works"><strong>How It Works</strong></a>
   </p>
 </div>
 
 <p align="center">
-  JAIPilot automatically writes high quality unit tests for your PR to achieve high coverage for Java codebases.
+  This repository is focused on the JAIPilot GitHub Action for PR automation.
 </p>
 
 <hr />
 
-JAIPilot automatically generates high quality high coverage unit tests for PRs for your Java codebase.
+JAIPilot generates high-quality tests for changed Java production classes in pull requests and pushes the generated changes back to the PR branch.
 
-## Why JAIPilot
+## Why This Action
 
-- Automatically generates high quality high coverage unit tests for PRs for your Java codebase
-- All generated tests are fully compilable, executable, and maximize line coverage
-- Analyzes changed Java code and context for every PR to generate high quality meaningful tests
-- Builds, executes, and maximizes line coverage
+- Generates and updates tests for changed Java production classes in a PR
+- Commits generated tests back to the PR branch automatically
+- Supports Maven and Gradle repositories
+- Exposes processed and failed class counts as action outputs
 
-## GitHub Action (PR Automation)
+## Prerequisites
 
-To run JAIPilot automatically on pull requests with this action, you must provide your JAIPilot license key to the workflow.
-Get the key by logging in at `https://jaipilot.com` (free credits are available).
-
-1. Go to your repository `Settings` -> `Secrets and variables` -> `Actions`.
-2. Create a repository secret (for example `JAIPILOT_LICENSE_KEY`) and paste your JAIPilot license key as the value.
-3. Reference that secret in your workflow input/env for the JAIPilot action.
-
-Without a valid license key configured in the action, JAIPilot will not auto-execute on PRs.
-
-## Install
-
-Install with:
-
-```sh
-curl -fsSL https://jaipilot.com/install.sh | bash
-```
-
-That installs `jaipilot` into `~/.local/bin` by default, downloads the platform-specific release archive for your machine, and verifies the release archive SHA-256 checksum before unpacking it.
-
-Bundled-runtime releases target:
-
-- `linux-x64`
-- `linux-aarch64`
-- `macos-x64`
-- `macos-aarch64`
-
-Make sure `~/.local/bin` is on your `PATH`.
-
-## Usage Options
-
-You can use JAIPilot in either of these ways:
-
-- JAIPilot CLI (run locally with `jaipilot` commands)
-- GitHub Action (run automatically on pull requests in GitHub)
+1. Get a JAIPilot license key from `https://jaipilot.com`.
+2. In the target repository, open `Settings -> Secrets and variables -> Actions`.
+3. Create a secret named `JAIPILOT_LICENSE_KEY`.
+4. Ensure your workflow job has `contents: write` permission so the action can push generated commits.
 
 ## Quick Start
 
-Set your JAIPilot license key:
+```yaml
+name: JAIPilot Generate Tests
 
-```sh
-export JAIPILOT_LICENSE_KEY="your-license-key"
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  jaipilot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Run JAIPilot
+        uses: JAIPilot/jaipilot-cli@action-v1
+        with:
+          jaipilot-license-key: ${{ secrets.JAIPILOT_LICENSE_KEY }}
 ```
 
-Get your license key by logging in at `https://jaipilot.com` (free credits are available).
+## Inputs
 
-Generate a JUnit test for a class:
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `working-directory` | No | `.` | Project directory where the action runs. |
+| `java-version` | No | `21` | Temurin Java version to install before generation. |
+| `install-script-url` | No | `https://jaipilot.com/install.sh` | Installer script URL used by the action. |
+| `jaipilot-license-key` | Yes | - | JAIPilot license key used to authorize generation. |
+| `fail-on-generate-error` | No | `true` | Fail the workflow if one or more classes fail generation. |
+| `commit-message` | No | `chore: generate tests with JAIPilot` | Commit message for generated test changes. |
+| `git-user-name` | No | `github-actions[bot]` | Git author name for generated commit. |
+| `git-user-email` | No | `41898282+github-actions[bot]@users.noreply.github.com` | Git author email for generated commit. |
 
-```sh
-jaipilot generate src/main/java/org/example/CrashController.java
-```
+## Outputs
 
-## Commands
-
-JAIPilot CLI exposes only one command:
-
-- `jaipilot generate <path-to-class>` generates or updates a corresponding test file.
+| Output | Description |
+| --- | --- |
+| `processed-classes` | Number of changed Java production classes processed. |
+| `failed-classes` | Number of classes for which generation failed. |
+| `commit-sha` | Commit SHA pushed by the action; empty when no changes were committed. |
 
 ## How It Works
 
-`jaipilot generate` reads local source files, calls the backend generation API, polls for completion, writes the returned test file, and validates it with your build tool in three stages: compile, codebase rules, and targeted test execution (`test-compile`/`verify`/targeted `test` for Maven, `testClasses`/`check`/targeted `test --tests` for Gradle). Rule validation is run with full-suite test execution skipped because JAIPilot already runs targeted test validation separately.
+- Detects changed files from PR base branch (or previous commit for push events).
+- Filters to non-test `.java` production classes only.
+- Generates tests for each changed class.
+- Commits and pushes generated tests to the same branch.
+- Optionally fails the job when generation errors occur.
 
-If validation fails, JAIPilot automatically performs iterative fixing passes using build failure logs. When required context classes are missing from local sources, JAIPilot can trigger dependency source download and retry.
+## Action Publishing
 
-For Maven wrapper usage, JAIPilot only uses wrapper scripts when `.mvn/wrapper/maven-wrapper.properties` exists; otherwise it falls back to system `mvn`/`mvn.cmd`.
+See [docs/github-action-publishing.md](docs/github-action-publishing.md) for release tagging and publishing flow.
 
 ## License
 

@@ -29,7 +29,6 @@ public final class JunitLlmSessionRunner {
     private static final int MAX_INTERACTIONS = 10;
     private static final int MAX_FETCH_ATTEMPTS = 120;
     private static final long FETCH_DELAY_MILLIS = 1_000L;
-    private static final String DEFAULT_MOCKITO_VERSION = "5.11.0";
     private static final String MISSING_CONTEXT_CLASS_PLACEHOLDER = "Class not found";
     private static final String MAVEN_CLASSPATH_OUTPUT_FILE = ".classpath.txt";
     private static final String GRADLE_CLASSPATH_OUTPUT_FILE = ".gradle-classpath.txt";
@@ -78,6 +77,7 @@ public final class JunitLlmSessionRunner {
     private final MavenCommandBuilder mavenCommandBuilder;
     private final GradleCommandBuilder gradleCommandBuilder;
     private final ProcessExecutor processExecutor;
+    private final MockitoVersionResolver mockitoVersionResolver;
 
     public JunitLlmSessionRunner(
             JunitLlmBackendClient backendClient,
@@ -92,7 +92,8 @@ public final class JunitLlmSessionRunner {
                 consoleLogger,
                 new MavenCommandBuilder(),
                 new GradleCommandBuilder(),
-                new ProcessExecutor()
+                new ProcessExecutor(),
+                new MockitoVersionResolver(fileService)
         );
     }
 
@@ -103,7 +104,8 @@ public final class JunitLlmSessionRunner {
             JunitLlmConsoleLogger consoleLogger,
             MavenCommandBuilder mavenCommandBuilder,
             GradleCommandBuilder gradleCommandBuilder,
-            ProcessExecutor processExecutor
+            ProcessExecutor processExecutor,
+            MockitoVersionResolver mockitoVersionResolver
     ) {
         this.backendClient = backendClient;
         this.fileService = fileService;
@@ -112,6 +114,9 @@ public final class JunitLlmSessionRunner {
         this.mavenCommandBuilder = mavenCommandBuilder == null ? new MavenCommandBuilder() : mavenCommandBuilder;
         this.gradleCommandBuilder = gradleCommandBuilder == null ? new GradleCommandBuilder() : gradleCommandBuilder;
         this.processExecutor = processExecutor == null ? new ProcessExecutor() : processExecutor;
+        this.mockitoVersionResolver = mockitoVersionResolver == null
+                ? new MockitoVersionResolver(fileService)
+                : mockitoVersionResolver;
     }
 
     public JunitLlmSessionResult run(JunitLlmSessionRequest sessionRequest) throws Exception {
@@ -125,6 +130,10 @@ public final class JunitLlmSessionRunner {
         );
         List<String> cachedContextPaths = usedContextClassPathCache.read(cacheKeyPath);
         consoleLogger.announceCacheRead(cacheKeyPath, cachedContextPaths);
+        String mockitoVersion = mockitoVersionResolver.resolve(
+                sessionRequest.projectRoot(),
+                sessionRequest.cutPath()
+        );
 
         String currentSessionId = blankToNull(sessionRequest.sessionId());
         String currentTestCode = normalizeNullableText(sessionRequest.newTestClassCode());
@@ -137,7 +146,7 @@ public final class JunitLlmSessionRunner {
                     sessionRequest.operation().apiValue(),
                     cutName,
                     testClassName,
-                    DEFAULT_MOCKITO_VERSION,
+                    mockitoVersion,
                     cutCode,
                     buildCachedContextClasses(
                             sessionRequest.projectRoot(),
