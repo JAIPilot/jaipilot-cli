@@ -176,6 +176,14 @@ runs:
         git config user.email "${{ inputs.git-user-email }}"
 
         git add -A
+        mapfile -t excluded_files < <(git diff --cached --name-only | grep -E '(^|/)\\.classpath\\.txt$' || true)
+        if [ "${#excluded_files[@]}" -gt 0 ]; then
+          echo "Excluding generated classpath artifacts from commit:"
+          printf ' - %s\n' "${excluded_files[@]}"
+          git restore --staged -- "${excluded_files[@]}"
+          rm -f -- "${excluded_files[@]}"
+        fi
+
         if git diff --cached --quiet; then
           echo "No staged changes after git add."
           echo "commit-sha=" >> "${GITHUB_OUTPUT}"
