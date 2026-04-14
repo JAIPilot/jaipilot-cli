@@ -170,8 +170,8 @@ public final class JunitLlmSessionRunner {
                     ? List.of()
                     : output.usedContextClassPaths();
             usedContextClassPathCache.write(cacheKeyPath, usedContextClassPaths);
-            cachedContextPaths = usedContextClassPaths;
-            if (output.finalTestFile() != null && !output.finalTestFile().isBlank()) {
+            boolean hasFinalTestFile = output.finalTestFile() != null && !output.finalTestFile().isBlank();
+            if (hasFinalTestFile) {
                 currentTestCode = output.finalTestFile();
             }
 
@@ -182,7 +182,9 @@ public final class JunitLlmSessionRunner {
                         sessionRequest,
                         requiredContextPaths
                 );
-                continue;
+                if (!hasFinalTestFile) {
+                    continue;
+                }
             }
 
             if (currentTestCode == null || currentTestCode.isBlank()) {

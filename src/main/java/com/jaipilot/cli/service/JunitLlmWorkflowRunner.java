@@ -280,7 +280,7 @@ public final class JunitLlmWorkflowRunner {
             Duration timeout,
             ValidationFailure initialValidationFailure
     ) throws Exception {
-        String lastValidatedTestCode = normalizeTestCode(initialRequest.initialTestClassCode());
+        String lastValidatedTestCode;
         String currentTestCode = readTestCode(latestSessionResult.outputPath());
 
         ValidationFailure validationFailure = initialValidationFailure;

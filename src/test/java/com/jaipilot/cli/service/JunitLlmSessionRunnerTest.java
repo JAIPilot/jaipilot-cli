@@ -135,7 +135,7 @@ class JunitLlmSessionRunnerTest {
         assertEquals(
                 List.of(
                         "com/example/support/Helper.java =\npackage com.example.support;\n\npublic class Helper {\n}\n",
-                        "com/example/BackendUsed.java =\npackage com.example;\n\npublic class BackendUsed {\n}\n"
+                        "com/example/CachedContext.java =\npackage com.example;\n\npublic class CachedContext {\n}\n"
                 ),
                 backendClient.requests.get(1).cachedContextClasses()
         );
@@ -143,7 +143,7 @@ class JunitLlmSessionRunnerTest {
                 "Class not found",
                 backendClient.requests.get(1).contextClasses().get(0)
         );
-        assertEquals("package com.example;\nclass DraftTest {}\n", backendClient.requests.get(1).newTestClassCode());
+        assertEquals("", backendClient.requests.get(1).newTestClassCode());
         assertEquals("session-1", result.sessionId());
         assertEquals(
                 "package com.example;\n\nclass FinalTest {\n}\n",
@@ -162,6 +162,55 @@ class JunitLlmSessionRunnerTest {
         assertFalse(progressOutput.contains("Waiting.."));
         assertFalse(progressOutput.contains("Source diff:"));
         assertFalse(progressOutput.contains("\u001B[32m+ "));
+    }
+
+    @Test
+    void runReturnsImmediatelyWhenResponseContainsFinalTestAndRequestedContext() throws Exception {
+        Path cutPath = write(
+                "src/main/java/com/example/CrashController.java",
+                """
+                package com.example;
+
+                public class CrashController {
+                }
+                """
+        );
+
+        StubBackendClient backendClient = new StubBackendClient(
+                new FetchJobResponse(
+                        "done",
+                        new FetchJobResponse.FetchJobOutput(
+                                "session-final",
+                                "package com.example;\nclass FinalTest {}\n",
+                                List.of("com.example.RequestedContext"),
+                                List.of("com/example/BackendUsed.java")
+                        ),
+                        null,
+                        null
+                )
+        );
+        JunitLlmSessionRunner runner = new JunitLlmSessionRunner(
+                backendClient,
+                new ProjectFileService(),
+                new UsedContextClassPathCache(tempDir.resolve("used-context-cache-immediate.json")),
+                new JunitLlmConsoleLogger(new PrintWriter(new StringWriter(), true))
+        );
+
+        JunitLlmSessionResult result = runner.run(new JunitLlmSessionRequest(
+                tempDir,
+                cutPath,
+                tempDir.resolve("src/test/java/com/example/CrashControllerTest.java"),
+                JunitLlmOperation.GENERATE,
+                null,
+                "",
+                "",
+                null
+        ));
+
+        assertEquals(1, backendClient.requests.size());
+        assertEquals("session-final", result.sessionId());
+        assertEquals("package com.example;\n\nclass FinalTest {\n}\n", Files.readString(result.outputPath()));
+        assertEquals(List.of("com/example/BackendUsed.java"), result.usedContextClassPaths());
     }
 
     @Test
@@ -210,7 +259,7 @@ class JunitLlmSessionRunnerTest {
                         "done",
                         new FetchJobResponse.FetchJobOutput(
                                 "session-3",
-                                "package com.example;\nclass DraftTest {}\n",
+                                "",
                                 List.of("com.example.RequestedContext"),
                                 List.of()
                         ),
@@ -296,7 +345,7 @@ class JunitLlmSessionRunnerTest {
                         "done",
                         new FetchJobResponse.FetchJobOutput(
                                 "session-gradle",
-                                "package com.example;\nclass DraftTest {}\n",
+                                "",
                                 List.of("java.lang.String"),
                                 List.of()
                         ),
@@ -375,7 +424,7 @@ class JunitLlmSessionRunnerTest {
                         "done",
                         new FetchJobResponse.FetchJobOutput(
                                 "session-1",
-                                "package com.example;\nclass DraftTest {}\n",
+                                "",
                                 List.of("com.example.RequestedContext"),
                                 List.of("com/example/BackendUsed.java")
                         ),
