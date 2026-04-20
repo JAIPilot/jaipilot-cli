@@ -8,18 +8,18 @@ Usage:
     --repo <owner/repo> \
     [--action-repo <owner/repo>] \
     [--action-ref <ref>] \
-    [--license-key <key>] \
+    [--auth-token <token>] \
     [--workflow-path <path>] \
     [--commit-message <message>] \
     [--dry-run]
 
 Examples:
   scripts/onboard-action-repo.sh --repo my-org/spring-framework-petclinic --action-ref action-v1
-  scripts/onboard-action-repo.sh --repo my-org/spring-framework-petclinic --license-key "$JAIPILOT_LICENSE_KEY"
+  scripts/onboard-action-repo.sh --repo my-org/spring-framework-petclinic --auth-token "$JAIPILOT_AUTH_TOKEN"
 
 Notes:
   - Requires GitHub CLI (`gh`) authenticated with permissions to edit target repo content.
-  - If --license-key is omitted, the script does not change repository secrets.
+  - If --auth-token is omitted, the script does not change repository secrets.
 USAGE
 }
 
@@ -43,7 +43,7 @@ repo_from_remote() {
 TARGET_REPO=""
 ACTION_REPO=""
 ACTION_REF="action-v1"
-LICENSE_KEY=""
+AUTH_TOKEN=""
 WORKFLOW_PATH=".github/workflows/jaipilot-generate.yml"
 COMMIT_MESSAGE="chore: add JAIPilot generate workflow"
 DRY_RUN="false"
@@ -62,8 +62,8 @@ while [[ $# -gt 0 ]]; do
       ACTION_REF="${2:-}"
       shift 2
       ;;
-    --license-key)
-      LICENSE_KEY="${2:-}"
+    --auth-token)
+      AUTH_TOKEN="${2:-}"
       shift 2
       ;;
     --workflow-path)
@@ -147,7 +147,7 @@ jobs:
       - name: Run JAIPilot generate and push changes
         uses: __ACTION_USES__
         with:
-          jaipilot-license-key: ${{ secrets.JAIPILOT_LICENSE_KEY }}
+          jaipilot-auth-token: ${{ secrets.JAIPILOT_AUTH_TOKEN }}
 YAML
 )"
 
@@ -186,12 +186,12 @@ fi
 gh api "${API_ARGS[@]}" >/dev/null
 echo "Workflow committed: ${WORKFLOW_PATH}"
 
-if [[ -n "$LICENSE_KEY" ]]; then
-  printf '%s' "$LICENSE_KEY" | gh secret set JAIPILOT_LICENSE_KEY -R "$TARGET_REPO" -b-
-  echo "Secret set: JAIPILOT_LICENSE_KEY"
+if [[ -n "$AUTH_TOKEN" ]]; then
+  printf '%s' "$AUTH_TOKEN" | gh secret set JAIPILOT_AUTH_TOKEN -R "$TARGET_REPO" -b-
+  echo "Secret set: JAIPILOT_AUTH_TOKEN"
 else
   echo "Secret unchanged. To set it manually:"
-  echo "  gh secret set JAIPILOT_LICENSE_KEY -R ${TARGET_REPO}"
+  echo "  gh secret set JAIPILOT_AUTH_TOKEN -R ${TARGET_REPO}"
 fi
 
 echo "Onboarding complete."

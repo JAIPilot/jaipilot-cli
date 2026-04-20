@@ -37,38 +37,24 @@ JAIPilot generates high-quality tests for changed Java production classes in pul
 
 ## Prerequisites
 
-1. Get a JAIPilot license key from `https://jaipilot.com`.
-2. In the target repository, open `Settings -> Secrets and variables -> Actions`.
-3. Create a secret named `JAIPILOT_LICENSE_KEY`.
-4. Ensure your workflow job has `contents: write` permission so the action can push generated commits.
+1. Install the JAIPilot GitHub App on the target repository.
+2. Ensure the app has repository permissions for:
+   - `Contents: Read and write`
+   - `Pull requests: Read and write`
+   - `Metadata: Read-only`
+3. Ensure the backend endpoints are deployed (JAIPilot cloud or self-hosted in `jaipilot-functions`):
+   - `POST /functions/v1/github-app-webhook`
+   - `POST /functions/v1/github-actions-token`
 
 ## Quick Start
 
-```yaml
-name: JAIPilot Generate Tests
-
-on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-
-jobs:
-  jaipilot:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-
-      - name: Run JAIPilot
-        uses: JAIPilot/jaipilot-cli@action-v1
-        with:
-          jaipilot-license-key: ${{ secrets.JAIPILOT_LICENSE_KEY }}
-```
+1. Deploy JAIPilot backend endpoints (`github-app-webhook` and `github-actions-token`).
+2. Install the app on a repository.
+3. The app automatically creates or updates `.github/workflows/jaipilot-generate.yml`.
+4. On every PR (`opened`, `synchronize`, `reopened`), the managed workflow:
+   - requests a GitHub OIDC token (`id-token: write`)
+   - exchanges it with `POST /functions/v1/github-actions-token` for a short-lived JAIPilot runtime token
+   - runs `JAIPilot/jaipilot-cli@action-v1` with `jaipilot-auth-token`
 
 ## How It Works
 
@@ -77,6 +63,16 @@ jobs:
 - Generates tests for each changed class.
 - Commits and pushes generated tests to the same branch.
 - Optionally fails the job when generation errors occur.
+
+## Manual Fallback
+
+If you do not use auto-install yet, use the legacy script-based onboarding flow:
+
+```bash
+./scripts/onboard-action-repo.sh --repo <owner/repo> --action-ref action-v1
+```
+
+That flow remains supported as a manual fallback and is documented in `docs/github-action-publishing.md`.
 
 ## Action Publishing
 

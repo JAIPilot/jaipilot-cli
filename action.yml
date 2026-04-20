@@ -19,9 +19,9 @@ inputs:
     description: "JAIPilot installer script URL."
     required: false
     default: "https://jaipilot.com/install.sh"
-  jaipilot-license-key:
-    description: "JAIPilot license key. Store it as the JAIPILOT_LICENSE_KEY repository secret."
-    required: true
+  jaipilot-auth-token:
+    description: "Short-lived JAIPilot runtime token (recommended)."
+    required: false
   fail-on-generate-error:
     description: "Fail the workflow if generation fails for one or more classes."
     required: false
@@ -79,14 +79,8 @@ runs:
         fi
         cd "$workdir"
 
-        if [ -n "${{ inputs.jaipilot-license-key }}" ]; then
-          export JAIPILOT_LICENSE_KEY="${{ inputs.jaipilot-license-key }}"
-        fi
-
-        if [ -z "${JAIPILOT_LICENSE_KEY:-}" ]; then
-          echo "Missing JAIPILOT_LICENSE_KEY. Set the 'jaipilot-license-key' input or define JAIPILOT_LICENSE_KEY as an environment variable." >&2
-          exit 1
-        fi
+        effective_auth="$("${{ github.action_path }}/scripts/resolve-jaipilot-auth.sh" "${{ inputs.jaipilot-auth-token }}")"
+        export JAIPILOT_LICENSE_KEY="$effective_auth"
 
         changed_files=""
 

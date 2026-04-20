@@ -1,65 +1,47 @@
 # JAIPilot GitHub Action: Generate and Publish
 
-This repository now includes a publishable root Action in [`action.yml`](../action.yml).
+This repository includes a publishable root Action in [`action.yml`](../action.yml).
 
-## Zero-manual-repo onboarding via GitHub App
+## Recommended onboarding: GitHub App auto-install
 
-If you want install-time onboarding (no per-repo YAML editing), run the GitHub App service in
-[`github-app/README.md`](../github-app/README.md). The app can automatically create/update
-the target repo workflow file on installation events.
+To avoid per-repo YAML copy/paste, deploy the GitHub App backend endpoints (recommended in `jaipilot-functions`):
 
-## One-command onboarding for another repository
+- `POST /functions/v1/github-app-webhook`
+- `POST /functions/v1/github-actions-token`
 
-Instead of manually creating workflow YAML in every repository, use:
+On app install events, the service automatically manages:
+
+- `.github/workflows/jaipilot-generate.yml`
+- OIDC-based runtime authentication (`POST /functions/v1/github-actions-token`)
+- PR fallback when default branch protection blocks direct workflow writes
+
+## Managed workflow behavior
+
+The managed workflow includes:
+
+- trigger: `pull_request` on `opened`, `synchronize`, `reopened`
+- permissions: `contents: write`, `pull-requests: write`, `id-token: write`
+- OIDC token request from GitHub Actions
+- runtime token exchange with `POST /functions/v1/github-actions-token`
+- action execution with `jaipilot-auth-token`
+
+Managed file contract:
+
+- marker at top of file: `# managed-by: jaipilot-github-app`
+- marker present: workflow is updated in place
+- marker absent: app opens/updates a PR instead of force-overwriting
+
+## Legacy/manual fallback (script)
+
+If you are not using auto-install yet, use:
 
 ```bash
 ./scripts/onboard-action-repo.sh \
   --repo <owner/target-repo> \
-  --action-ref action-v1 \
-  --license-key "<JAIPILOT_LICENSE_KEY>"
+  --action-ref action-v1
 ```
 
-This command:
-
-- creates or updates `.github/workflows/jaipilot-generate.yml` in the target repo
-- points it to this action release
-- optionally sets `JAIPILOT_LICENSE_KEY` as a repository secret
-
-## Use the action in a workflow
-
-```yaml
-name: JAIPilot Generate Tests
-
-on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-
-jobs:
-  jaipilot:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          # Needed so the action can commit to the PR branch.
-          ref: ${{ github.head_ref }}
-
-      - name: Run JAIPilot generate for all non-test Java classes
-        uses: <OWNER>/<REPO>@action-v1
-        with:
-          jaipilot-license-key: ${{ secrets.JAIPILOT_LICENSE_KEY }}
-```
-
-The action automatically:
-
-- finds all `.java` files excluding test classes (`*Test.java`, `*Tests.java`, `*IT.java`, `*ITCase.java`) and files under `src/test`
-- runs `jaipilot generate` for each class
-- commits generated test changes
-- pushes the commit back to the same branch that triggered the workflow
+This legacy flow remains available for manual onboarding.
 
 ## Publish the rolling action release
 
@@ -81,5 +63,5 @@ The workflow will:
 
 ## Why tags are prefixed with `action-`
 
-This repository already uses `v*` tags for CLI release automation.  
+This repository already uses `v*` tags for CLI release automation.
 Using `action-v*` avoids collisions with existing release workflows.
