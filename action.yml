@@ -165,6 +165,20 @@ runs:
           fi
         done
 
+        mapfile -d '' -t classpath_artifacts < <(find . -type f -name '.classpath.txt' -print0)
+        if [ "${#classpath_artifacts[@]}" -gt 0 ]; then
+          echo "Cleaning generated classpath artifacts:"
+          for artifact_path in "${classpath_artifacts[@]}"; do
+            rel_artifact_path="${artifact_path#./}"
+            echo " - $rel_artifact_path"
+            if git ls-files --error-unmatch -- "$rel_artifact_path" >/dev/null 2>&1; then
+              git restore --worktree -- "$rel_artifact_path"
+            else
+              rm -f -- "$artifact_path"
+            fi
+          done
+        fi
+
         echo "processed-classes=$processed" >> "${GITHUB_OUTPUT}"
         echo "failed-classes=$failed" >> "${GITHUB_OUTPUT}"
         echo "JAIPILOT_GENERATE_FAILED=$failed" >> "${GITHUB_ENV}"
