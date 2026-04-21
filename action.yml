@@ -15,10 +15,6 @@ inputs:
     description: "Temurin Java version to install before running JAIPilot."
     required: false
     default: "21"
-  install-script-url:
-    description: "Optional JAIPilot installer script URL override."
-    required: false
-    default: ""
   jaipilot-auth-token:
     description: "JAIPilot runtime token. If omitted, the action auto-exchanges GitHub OIDC for a short-lived runtime token when available."
     required: false
@@ -71,12 +67,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        install_script_url="${{ inputs.install-script-url }}"
-        if [ -n "$install_script_url" ]; then
-          curl -fsSL "$install_script_url" | bash
-        else
-          bash "${{ github.action_path }}/install.sh"
-        fi
+        bash "${{ github.action_path }}/install.sh"
         echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
 
     - name: Generate tests for changed Java production classes
