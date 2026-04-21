@@ -58,6 +58,7 @@ JAIPilot generates high-quality tests for changed Java production classes in pul
 
 ## How It Works
 
+- Resolves JAIPilot auth by preferring GitHub OIDC runtime token exchange when `id-token: write` is available; falls back to `jaipilot-auth-token` / `JAIPILOT_AUTH_TOKEN` / `JAIPILOT_LICENSE_KEY`.
 - Detects changed files from PR base branch (or previous commit for push events).
 - Filters to non-test `.java` production classes only.
 - Generates tests for each changed class.

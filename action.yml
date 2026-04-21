@@ -20,8 +20,16 @@ inputs:
     required: false
     default: ""
   jaipilot-auth-token:
-    description: "Short-lived JAIPilot runtime token (recommended)."
+    description: "JAIPilot runtime token. If omitted, the action auto-exchanges GitHub OIDC for a short-lived runtime token when available."
     required: false
+  jaipilot-token-endpoint:
+    description: "Optional override for the JAIPilot OIDC exchange endpoint."
+    required: false
+    default: ""
+  jaipilot-oidc-audience:
+    description: "GitHub OIDC audience used during runtime token exchange."
+    required: false
+    default: "jaipilot-github-app"
   fail-on-generate-error:
     description: "Fail the workflow if generation fails for one or more classes."
     required: false
@@ -83,6 +91,11 @@ runs:
           exit 1
         fi
         cd "$workdir"
+
+        if [ -n "${{ inputs.jaipilot-token-endpoint }}" ]; then
+          export JAIPILOT_TOKEN_ENDPOINT="${{ inputs.jaipilot-token-endpoint }}"
+        fi
+        export JAIPILOT_OIDC_AUDIENCE="${{ inputs.jaipilot-oidc-audience }}"
 
         effective_auth="$("${{ github.action_path }}/scripts/resolve-jaipilot-auth.sh" "${{ inputs.jaipilot-auth-token }}")"
         export JAIPILOT_LICENSE_KEY="$effective_auth"
@@ -175,12 +188,21 @@ runs:
         git config user.email "${{ inputs.git-user-email }}"
 
         git add -A
-        mapfile -t excluded_files < <(git diff --cached --name-only | grep -E '(^|/)\\.classpath\\.txt$' || true)
+        mapfile -t excluded_files < <(
+          git ls-files --cached --others --exclude-standard \
+            | grep -E '(^|/)\\.classpath\\.txt$' || true
+        )
         if [ "${#excluded_files[@]}" -gt 0 ]; then
           echo "Excluding generated classpath artifacts from commit:"
           printf ' - %s\n' "${excluded_files[@]}"
-          git restore --staged -- "${excluded_files[@]}"
-          rm -f -- "${excluded_files[@]}"
+          git restore --staged -- "${excluded_files[@]}" || true
+          for excluded_file in "${excluded_files[@]}"; do
+            if git ls-files --error-unmatch -- "$excluded_file" >/dev/null 2>&1; then
+              git restore --worktree -- "$excluded_file"
+            else
+              rm -f -- "$excluded_file"
+            fi
+          done
         fi
 
         if git diff --cached --quiet; then
