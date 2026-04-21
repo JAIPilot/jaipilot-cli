@@ -197,23 +197,13 @@ class ProjectFileServiceTest {
     }
 
     @Test
-    void writeFileFormatsJavaSourceUsingRepoStyleIndentation() throws Exception {
+    void writeFileDoesNotFormatJavaSource() throws Exception {
         Path javaFile = tempDir.resolve("Example.java");
+        String source = "package com.example;class Example{void run(){}}";
 
-        projectFileService.writeFile(javaFile, "package com.example;class Example{void run(){}}");
+        projectFileService.writeFile(javaFile, source);
 
-        assertEquals(
-                """
-                package com.example;
-
-                class Example {
-
-                    void run() {
-                    }
-                }
-                """,
-                Files.readString(javaFile)
-        );
+        assertEquals(source, Files.readString(javaFile));
     }
 
     private Path writeSource(Path projectRoot, String relativePath, String content) throws Exception {

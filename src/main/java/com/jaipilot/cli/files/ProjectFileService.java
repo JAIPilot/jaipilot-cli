@@ -1,7 +1,6 @@
 package com.jaipilot.cli.files;
 
 import com.jaipilot.cli.process.BuildTool;
-import com.jaipilot.cli.util.JavaSourceFormatter;
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
 import java.nio.charset.StandardCharsets;
@@ -66,10 +65,7 @@ public final class ProjectFileService {
             if (parent != null) {
                 Files.createDirectories(parent);
             }
-            String normalizedContent = path.getFileName() != null && path.getFileName().toString().endsWith(".java")
-                    ? JavaSourceFormatter.format(content)
-                    : content;
-            Files.writeString(path, normalizedContent, StandardCharsets.UTF_8);
+            Files.writeString(path, content, StandardCharsets.UTF_8);
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to write file " + path, exception);
         }
