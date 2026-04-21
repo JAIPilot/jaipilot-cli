@@ -16,9 +16,9 @@ inputs:
     required: false
     default: "21"
   install-script-url:
-    description: "JAIPilot installer script URL."
+    description: "Optional JAIPilot installer script URL override."
     required: false
-    default: "https://jaipilot.com/install.sh"
+    default: ""
   jaipilot-auth-token:
     description: "Short-lived JAIPilot runtime token (recommended)."
     required: false
@@ -63,7 +63,12 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        curl -fsSL "${{ inputs.install-script-url }}" | bash
+        install_script_url="${{ inputs.install-script-url }}"
+        if [ -n "$install_script_url" ]; then
+          curl -fsSL "$install_script_url" | bash
+        else
+          bash "${{ github.action_path }}/install.sh"
+        fi
         echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
 
     - name: Generate tests for changed Java production classes
