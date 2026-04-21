@@ -102,23 +102,26 @@ run_or_print git push "$REMOTE_NAME" "refs/tags/${RELEASE_TAG}" --force
 if [ "$UPSERT_GH_RELEASE" -eq 1 ]; then
   TARGET_SHORT=$(git rev-parse --short "$TARGET_COMMIT")
   RELEASE_TITLE="JAIPilot Action ${RELEASE_TAG}"
-  RELEASE_NOTES="Rolling release for ${RELEASE_TAG}. Updated from commit ${TARGET_SHORT} on $(date -u +'%Y-%m-%d %H:%M:%S UTC')."
+  RELEASE_NOTES="Rolling action-channel release for ${RELEASE_TAG}. Updated from commit ${TARGET_SHORT} on $(date -u +'%Y-%m-%d %H:%M:%S UTC')."
 
   if [ "$DRY_RUN" -eq 1 ]; then
     echo "[dry-run] gh release view ${RELEASE_TAG}"
-    echo "[dry-run] gh release edit ${RELEASE_TAG} --target ${TARGET_COMMIT} --title '${RELEASE_TITLE}' --notes '<generated>'"
-    echo "[dry-run] gh release create ${RELEASE_TAG} --target ${TARGET_COMMIT} --title '${RELEASE_TITLE}' --notes '<generated>'"
+    echo "[dry-run] gh release edit ${RELEASE_TAG} --target ${TARGET_COMMIT} --title '${RELEASE_TITLE}' --notes '<generated>' --prerelease"
+    echo "[dry-run] gh release create ${RELEASE_TAG} --target ${TARGET_COMMIT} --title '${RELEASE_TITLE}' --notes '<generated>' --prerelease --latest=false"
   else
     if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
       gh release edit "$RELEASE_TAG" \
         --target "$TARGET_COMMIT" \
         --title "$RELEASE_TITLE" \
-        --notes "$RELEASE_NOTES"
+        --notes "$RELEASE_NOTES" \
+        --prerelease
     else
       gh release create "$RELEASE_TAG" \
         --target "$TARGET_COMMIT" \
         --title "$RELEASE_TITLE" \
-        --notes "$RELEASE_NOTES"
+        --notes "$RELEASE_NOTES" \
+        --prerelease \
+        --latest=false
     fi
   fi
 fi

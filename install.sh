@@ -87,9 +87,24 @@ compute_sha256() {
 }
 
 resolve_latest_version() {
-  json=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest")
-  version=$(printf '%s' "$json" | tr -d '\n' | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(v\{0,1\}[^"]*\)".*/\1/p')
-  [ -n "$version" ] || die "Failed to determine the latest JAIPilot version."
+  latest_json=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest")
+  latest_tag=$(printf '%s' "$latest_json" | tr -d '\n' | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  if printf '%s\n' "$latest_tag" | grep -Eq '^v[0-9]+(\.[0-9]+)*$'; then
+    strip_v "$latest_tag"
+    return
+  fi
+
+  # Fallback: select the newest semantic-version release tag (v<digits>[.<digits>]...),
+  # ignoring action-channel tags like action-v1.
+  releases_json=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100")
+  version=$(printf '%s\n' "$releases_json" \
+    | tr ',' '\n' \
+    | sed -n 's/^[[:space:]]*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    | grep -E '^v[0-9]+(\.[0-9]+)*$' \
+    | sort -V \
+    | tail -n 1)
+
+  [ -n "$version" ] || die "Failed to determine the latest JAIPilot semantic release version."
   strip_v "$version"
 }
 
