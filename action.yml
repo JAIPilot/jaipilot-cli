@@ -89,7 +89,7 @@ runs:
         export JAIPILOT_OIDC_AUDIENCE="${{ inputs.jaipilot-oidc-audience }}"
 
         effective_auth="$("${{ github.action_path }}/scripts/resolve-jaipilot-auth.sh" "${{ inputs.jaipilot-auth-token }}")"
-        export JAIPILOT_LICENSE_KEY="$effective_auth"
+        export JAIPILOT_AUTH_TOKEN="$effective_auth"
 
         changed_files=""
 

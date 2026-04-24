@@ -1,6 +1,6 @@
 <div align="center">
   <img src="docs/assets/jaipilot-logo.svg" alt="JAIPilot logo" width="160" />
-  <h1>JAIPilot GitHub Action</h1>
+  <h1>JAIPilot GitHub App</h1>
   <p><strong>Automatically generate high-coverage Java unit tests on every pull request.</strong></p>
   <p>
     <a href="https://github.com/JAIPilot/jaipilot-cli/actions/workflows/ci.yml">
@@ -21,19 +21,19 @@
 </div>
 
 <p align="center">
-  This repository is focused on the JAIPilot GitHub Action for PR automation.
+  This repository is focused on the JAIPilot GitHub App for PR automation.
 </p>
 
 <hr />
 
 JAIPilot generates high-quality tests for changed Java production classes in pull requests and pushes the generated changes back to the PR branch.
 
-## Why This Action
+## Why This App
 
 - Generates and updates tests for changed Java production classes in a PR
 - Commits generated tests back to the PR branch automatically
 - Supports Maven and Gradle repositories
-- Exposes processed and failed class counts as action outputs
+- Exposes processed and failed class counts as workflow outputs
 
 ## Prerequisites
 
@@ -58,12 +58,25 @@ JAIPilot generates high-quality tests for changed Java production classes in pul
 
 ## How It Works
 
-- Resolves JAIPilot auth by preferring GitHub OIDC runtime token exchange when `id-token: write` is available; falls back to `jaipilot-auth-token` / `JAIPILOT_AUTH_TOKEN` / `JAIPILOT_LICENSE_KEY`.
+- Resolves JAIPilot auth by preferring GitHub OIDC runtime token exchange when `id-token: write` is available; falls back to `jaipilot-auth-token` / `JAIPILOT_AUTH_TOKEN`.
 - Detects changed files from PR base branch (or previous commit for push events).
 - Filters to non-test `.java` production classes only.
 - Generates tests for each changed class.
 - Commits and pushes generated tests to the same branch.
 - Optionally fails the job when generation errors occur.
+
+## Local CLI Auth
+
+For local CLI runs, you can persist your token once:
+
+```bash
+jaipilot login <jaipilot-auth-token>
+```
+
+`jaipilot generate ...` will then use:
+
+1. `JAIPILOT_AUTH_TOKEN` (if set), otherwise
+2. the token saved by `jaipilot login`.
 
 ## Manual Fallback
 

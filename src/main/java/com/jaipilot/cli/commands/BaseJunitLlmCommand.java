@@ -3,31 +3,24 @@ package com.jaipilot.cli.commands;
 import com.jaipilot.cli.JaipilotEndpointConfig;
 import com.jaipilot.cli.backend.HttpJunitLlmBackendClient;
 import com.jaipilot.cli.backend.JunitLlmBackendClient;
-import com.jaipilot.cli.files.ProjectFileService;
 import com.jaipilot.cli.model.JunitLlmOperation;
 import com.jaipilot.cli.model.JunitLlmSessionRequest;
 import com.jaipilot.cli.model.JunitLlmSessionResult;
-import com.jaipilot.cli.process.GradleCommandBuilder;
-import com.jaipilot.cli.process.MavenCommandBuilder;
-import com.jaipilot.cli.process.ProcessExecutor;
-import com.jaipilot.cli.service.JunitLlmConsoleLogger;
 import com.jaipilot.cli.service.JunitLlmSessionRunner;
-import com.jaipilot.cli.service.JunitLlmWorkflowRunner;
-import com.jaipilot.cli.service.UsedContextClassPathCache;
+import com.jaipilot.cli.service.ProjectFileService;
+import com.jaipilot.cli.util.JaipilotAuthTokenStore;
 import java.io.PrintWriter;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Spec;
 
 abstract class BaseJunitLlmCommand implements Callable<Integer> {
-
-    private static final Duration GENERATE_TIMEOUT = Duration.ofSeconds(600);
 
     @Spec
     private CommandSpec spec;
@@ -46,8 +39,8 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
     public final Integer call() {
         PrintWriter out = spec.commandLine().getOut();
         PrintWriter err = spec.commandLine().getErr();
-        JunitLlmConsoleLogger consoleLogger = new JunitLlmConsoleLogger(out);
-        JunitLlmConsoleLogger errorLogger = new JunitLlmConsoleLogger(err);
+        JunitLlmSessionRunner.ConsoleLogger consoleLogger = new JunitLlmSessionRunner.ConsoleLogger(out);
+        JunitLlmSessionRunner.ConsoleLogger errorLogger = new JunitLlmSessionRunner.ConsoleLogger(err);
         Instant startedAt = Instant.now();
 
         try {
@@ -61,24 +54,14 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
 
             JunitLlmBackendClient backendClient = new HttpJunitLlmBackendClient(
                     JaipilotEndpointConfig.resolveBackendUrl(),
-                    resolveLicenseKey()
+                    resolveAuthToken()
             );
             JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
                     backendClient,
                     fileService,
-                    new UsedContextClassPathCache(),
                     consoleLogger
             );
-            JunitLlmWorkflowRunner workflowRunner = new JunitLlmWorkflowRunner(
-                    sessionRunner,
-                    new MavenCommandBuilder(),
-                    new GradleCommandBuilder(),
-                    new ProcessExecutor(),
-                    fileService,
-                    true,
-                    out
-            );
-            JunitLlmSessionResult result = workflowRunner.run(new JunitLlmSessionRequest(
+            JunitLlmSessionResult result = sessionRunner.run(new JunitLlmSessionRequest(
                     normalizedProjectRoot,
                     resolvedCutPath,
                     resolvedOutputPath,
@@ -87,11 +70,7 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
                     initialTestClassCode(resolvedOutputPath),
                     "",
                     null
-            ),
-                    null,
-                    List.of(),
-                    GENERATE_TIMEOUT
-            );
+            ));
 
             consoleLogger.announceTestFile(result.outputPath());
             consoleLogger.announceTestFileDiff(initialOutputContent, fileService.readFile(result.outputPath()));
@@ -118,15 +97,29 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
         return fileService;
     }
 
-    private String resolveLicenseKey() {
-        String licenseKey = firstNonBlank(System.getenv("JAIPILOT_LICENSE_KEY"));
-        if (licenseKey == null) {
+    private String resolveAuthToken() {
+        String authToken;
+        try {
+            authToken = firstNonBlank(
+                    System.getenv("JAIPILOT_AUTH_TOKEN"),
+                    JaipilotAuthTokenStore.readBrowserAccessToken(),
+                    JaipilotAuthTokenStore.readAuthToken()
+            );
+        } catch (IOException exception) {
             throw new CommandLine.ParameterException(
                     spec.commandLine(),
-                    "Set JAIPILOT_LICENSE_KEY."
+                    "Failed to read stored JAIPilot auth token: " + exception.getMessage(),
+                    exception
             );
         }
-        return licenseKey;
+        if (authToken == null) {
+            throw new CommandLine.ParameterException(
+                    spec.commandLine(),
+                    "Set JAIPILOT_AUTH_TOKEN, run 'jaipilot login <token>', or provide browser-login "
+                            + "credentials at ~/.config/jaipilot/credentials.json."
+            );
+        }
+        return authToken;
     }
 
     private Path inferProjectRoot(Path workingDirectory, Path resolvedCutPath) {

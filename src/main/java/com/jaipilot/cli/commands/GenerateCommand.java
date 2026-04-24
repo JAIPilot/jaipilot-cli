@@ -1,6 +1,6 @@
 package com.jaipilot.cli.commands;
 
-import com.jaipilot.cli.files.ProjectFileService;
+import com.jaipilot.cli.service.ProjectFileService;
 import com.jaipilot.cli.model.JunitLlmOperation;
 import java.nio.file.Files;
 import java.nio.file.Path;

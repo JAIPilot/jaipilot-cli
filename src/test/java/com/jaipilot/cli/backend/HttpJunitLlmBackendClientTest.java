@@ -57,9 +57,8 @@ class HttpJunitLlmBackendClientTest {
                 "CrashControllerTest",
                 "5.11.0",
                 "class body",
-                List.of("com/example/Helper.java =\npackage com.example;\n"),
                 "",
-                List.of(),
+                List.of("com/example/Helper.java =\npackage com.example;\n"),
                 "",
                 null
         ));
@@ -74,11 +73,11 @@ class HttpJunitLlmBackendClientTest {
         assertTrue(requestBody.get().contains("\"testClassName\":\"CrashControllerTest\""));
         assertTrue(requestBody.get().contains("\"mockitoVersion\":\"5.11.0\""));
         assertTrue(requestBody.get().contains("\"cutCode\":\"class body\""));
-        assertTrue(requestBody.get().contains("\"cachedContextClasses\":[\"com/example/Helper.java =\\npackage com.example;\\n\"]"));
         assertTrue(requestBody.get().contains("\"initialTestClassCode\":\"\""));
-        assertTrue(requestBody.get().contains("\"contextClasses\":[]"));
+        assertTrue(requestBody.get().contains("\"contextClasses\":[\"com/example/Helper.java =\\npackage com.example;\\n\"]"));
         assertTrue(requestBody.get().contains("\"newTestClassCode\":\"\""));
         assertTrue(requestBody.get().contains("\"clientLogs\":null"));
+        assertFalse(requestBody.get().contains("\"cachedContextClasses\""));
         assertFalse(requestBody.get().contains("attemptNumber"));
         assertFalse(requestBody.get().contains("\"sessionId\""));
         assertFalse(requestBody.get().contains("cut_name"));
@@ -109,7 +108,6 @@ class HttpJunitLlmBackendClientTest {
                 "CrashControllerTest",
                 null,
                 "class body",
-                List.of(),
                 "",
                 List.of(),
                 "",
@@ -128,7 +126,9 @@ class HttpJunitLlmBackendClientTest {
             query.set(exchange.getRequestURI().getQuery());
             writeJson(
                     exchange,
-                    "{\"status\":\"done\",\"output\":{\"sessionId\":\"session-1\",\"finalTestFile\":\"class body\"}}"
+                    """
+                    {"status":"done","output":{"sessionId":"session-1","finalTestFile":"class body","pendingBashCommands":["mvn test"]}}
+                    """
             );
         });
         server.start();
@@ -141,6 +141,7 @@ class HttpJunitLlmBackendClientTest {
         assertEquals("done", response.status());
         assertEquals("session-1", response.output().sessionId());
         assertEquals("class body", response.output().finalTestFile());
+        assertEquals(List.of("mvn test"), response.output().pendingBashCommands());
     }
 
     @Test
@@ -264,7 +265,6 @@ class HttpJunitLlmBackendClientTest {
                 "CrashControllerTest",
                 "5.11.0",
                 "class body",
-                List.of(),
                 "",
                 List.of(),
                 "",

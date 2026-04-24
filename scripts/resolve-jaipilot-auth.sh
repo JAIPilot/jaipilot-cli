@@ -2,10 +2,8 @@
 set -euo pipefail
 
 jaipilot_auth_token="${1:-}"
-default_backend_url="https://otxfylhjrlaesjagfhfi.supabase.co"
-jaipilot_backend_url="${JAIPILOT_BACKEND_URL:-$default_backend_url}"
-jaipilot_backend_url="${jaipilot_backend_url%/}"
-jaipilot_token_endpoint="${JAIPILOT_TOKEN_ENDPOINT:-${jaipilot_backend_url}/functions/v1/github-actions-token}"
+default_token_endpoint="https://otxfylhjrlaesjagfhfi.supabase.co/functions/v1/github-actions-token"
+jaipilot_token_endpoint="${JAIPILOT_TOKEN_ENDPOINT:-$default_token_endpoint}"
 jaipilot_oidc_audience="${JAIPILOT_OIDC_AUDIENCE:-jaipilot-github-app}"
 
 log_warn() {
@@ -86,10 +84,5 @@ if [ -n "${JAIPILOT_AUTH_TOKEN:-}" ]; then
   exit 0
 fi
 
-if [ -n "${JAIPILOT_LICENSE_KEY:-}" ]; then
-  printf '%s\n' "$JAIPILOT_LICENSE_KEY"
-  exit 0
-fi
-
-echo "Missing JAIPilot credentials. Provide 'jaipilot-auth-token', set JAIPILOT_AUTH_TOKEN/JAIPILOT_LICENSE_KEY, or grant 'id-token: write' for OIDC token exchange." >&2
+echo "Missing JAIPilot credentials. Provide 'jaipilot-auth-token', set JAIPILOT_AUTH_TOKEN, or grant 'id-token: write' for OIDC token exchange." >&2
 exit 1

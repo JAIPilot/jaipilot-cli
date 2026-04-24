@@ -35,7 +35,6 @@ class HttpJunitLlmBackendClientTlsTest {
                 "CrashControllerTest",
                 "5.11.0",
                 "class body",
-                List.of(),
                 "",
                 List.of(),
                 "",

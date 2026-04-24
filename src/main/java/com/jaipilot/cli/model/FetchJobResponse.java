@@ -28,7 +28,7 @@ public record FetchJobResponse(
             @JsonAlias("session_id") @JsonProperty("sessionId") String sessionId,
             @JsonAlias("final_test_file") @JsonProperty("finalTestFile") String finalTestFile,
             @JsonAlias("required_context_class_paths") @JsonProperty("requiredContextClassPaths") List<String> requiredContextClassPaths,
-            @JsonAlias("used_context_class_paths") @JsonProperty("usedContextClassPaths") List<String> usedContextClassPaths
+            @JsonAlias("pending_bash_commands") @JsonProperty("pendingBashCommands") List<String> pendingBashCommands
     ) {
     }
 }

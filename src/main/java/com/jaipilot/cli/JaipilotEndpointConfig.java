@@ -8,26 +8,6 @@ public final class JaipilotEndpointConfig {
     }
 
     public static String resolveBackendUrl() {
-        return trimTrailingSlash(firstNonBlank(
-                System.getenv("JAIPILOT_BACKEND_URL"),
-                System.getProperty("jaipilot.backend.url"),
-                DEFAULT_BACKEND_URL
-        ));
-    }
-
-    private static String firstNonBlank(String... values) {
-        for (String value : values) {
-            if (value != null && !value.isBlank()) {
-                return value;
-            }
-        }
-        return null;
-    }
-
-    private static String trimTrailingSlash(String value) {
-        if (value == null || value.isBlank()) {
-            return value;
-        }
-        return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+        return DEFAULT_BACKEND_URL;
     }
 }

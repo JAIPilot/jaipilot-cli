@@ -1,6 +1,7 @@
 package com.jaipilot.cli;
 
 import com.jaipilot.cli.commands.GenerateCommand;
+import com.jaipilot.cli.commands.LoginCommand;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -13,7 +14,8 @@ import picocli.CommandLine.Model.CommandSpec;
         versionProvider = JaiPilotVersionProvider.class,
         description = "Runs backend-assisted JUnit generation workflows.",
         subcommands = {
-            GenerateCommand.class
+            GenerateCommand.class,
+            LoginCommand.class
         }
 )
 public final class JaiPilotCli implements Callable<Integer> {

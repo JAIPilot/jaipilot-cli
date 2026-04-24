@@ -39,7 +39,7 @@ class JunitLlmCommandHelpIntegrationTest {
     }
 
     @Test
-    void rootHelpListsOnlyGenerateCommand() {
+    void rootHelpListsGenerateAndLoginCommands() {
         StringWriter outBuffer = new StringWriter();
         CommandLine commandLine = new CommandLine(new JaiPilotCli())
                 .setOut(new PrintWriter(outBuffer, true))
@@ -49,7 +49,7 @@ class JunitLlmCommandHelpIntegrationTest {
 
         assertEquals(0, exitCode);
         assertTrue(outBuffer.toString().contains("generate"));
-        assertFalse(outBuffer.toString().contains("login"));
+        assertTrue(outBuffer.toString().contains("login"));
         assertFalse(outBuffer.toString().contains("logout"));
         assertFalse(outBuffer.toString().contains("status"));
         assertFalse(outBuffer.toString().contains("update"));

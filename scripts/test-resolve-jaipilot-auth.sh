@@ -22,9 +22,6 @@ assert_equals "auth-token" "$output" "auth token input should win over env fallb
 output="$(JAIPILOT_AUTH_TOKEN=env-token "$SCRIPT_PATH" "")"
 assert_equals "env-token" "$output" "env token should be final fallback"
 
-output="$(JAIPILOT_AUTH_TOKEN= JAIPILOT_LICENSE_KEY=license-token "$SCRIPT_PATH" "")"
-assert_equals "license-token" "$output" "license key env should be accepted as fallback"
-
 tmp_bin_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_bin_dir"' EXIT
 cat > "${tmp_bin_dir}/curl" <<'MOCKCURL'
@@ -137,7 +134,7 @@ output="$(
 assert_equals "runtime-token-from-oidc" "$output" "OIDC exchange should be preferred when available"
 
 set +e
-missing_output="$(JAIPILOT_AUTH_TOKEN= JAIPILOT_LICENSE_KEY= "$SCRIPT_PATH" "" 2>&1)"
+missing_output="$(JAIPILOT_AUTH_TOKEN= "$SCRIPT_PATH" "" 2>&1)"
 missing_status=$?
 set -e
 

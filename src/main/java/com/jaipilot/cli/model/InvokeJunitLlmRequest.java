@@ -9,7 +9,6 @@ public record InvokeJunitLlmRequest(
         String testClassName,
         String mockitoVersion,
         String cutCode,
-        List<String> cachedContextClasses,
         String initialTestClassCode,
         List<String> contextClasses,
         String newTestClassCode,

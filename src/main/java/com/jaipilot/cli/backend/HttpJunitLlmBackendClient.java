@@ -36,15 +36,15 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
     private final CurlHttpClient curlHttpClient;
     private final ObjectMapper objectMapper;
     private final String backendUrl;
-    private final String licenseKey;
+    private final String authToken;
     private final SleepStrategy sleepStrategy;
 
-    public HttpJunitLlmBackendClient(String backendUrl, String licenseKey) {
+    public HttpJunitLlmBackendClient(String backendUrl, String authToken) {
         this(
                 new CurlHttpClient(),
                 OBJECT_MAPPER,
                 backendUrl,
-                licenseKey,
+                authToken,
                 Thread::sleep
         );
     }
@@ -53,19 +53,19 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
             CurlHttpClient curlHttpClient,
             ObjectMapper objectMapper,
             String backendUrl,
-            String licenseKey,
+            String authToken,
             SleepStrategy sleepStrategy
     ) {
         if (backendUrl == null || backendUrl.isBlank()) {
             throw new IllegalArgumentException("backendUrl is required");
         }
-        if (licenseKey == null || licenseKey.isBlank()) {
-            throw new IllegalArgumentException("licenseKey is required");
+        if (authToken == null || authToken.isBlank()) {
+            throw new IllegalArgumentException("authToken is required");
         }
         this.curlHttpClient = Objects.requireNonNull(curlHttpClient, "curlHttpClient");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.backendUrl = trimTrailingSlash(backendUrl);
-        this.licenseKey = licenseKey.trim();
+        this.authToken = authToken.trim();
         this.sleepStrategy = Objects.requireNonNull(sleepStrategy, "sleepStrategy");
     }
 
@@ -81,7 +81,7 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
                     "POST",
                     Map.of(
                             "Accept", "application/json",
-                            "Authorization", "Bearer " + licenseKey,
+                            "Authorization", "Bearer " + authToken,
                             "Content-Type", "application/json"
                     ),
                     body,
@@ -108,7 +108,7 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
                     "GET",
                     Map.of(
                             "Accept", "application/json",
-                            "Authorization", "Bearer " + licenseKey
+                            "Authorization", "Bearer " + authToken
                     ),
                     null,
                     Duration.ofSeconds(30)
@@ -234,7 +234,6 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
         putString(root, "testClassName", request.testClassName());
         putOptionalString(root, "mockitoVersion", request.mockitoVersion());
         putString(root, "cutCode", request.cutCode());
-        putStringArray(root, "cachedContextClasses", request.cachedContextClasses());
         putString(root, "initialTestClassCode", request.initialTestClassCode());
         putStringArray(root, "contextClasses", request.contextClasses());
         putString(root, "newTestClassCode", request.newTestClassCode());

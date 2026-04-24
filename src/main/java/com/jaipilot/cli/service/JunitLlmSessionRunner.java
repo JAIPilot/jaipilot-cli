@@ -1,142 +1,68 @@
 package com.jaipilot.cli.service;
 
 import com.jaipilot.cli.backend.JunitLlmBackendClient;
-import com.jaipilot.cli.files.ProjectFileService;
 import com.jaipilot.cli.model.FetchJobResponse;
 import com.jaipilot.cli.model.InvokeJunitLlmRequest;
 import com.jaipilot.cli.model.InvokeJunitLlmResponse;
+import com.jaipilot.cli.model.JunitLlmOperation;
 import com.jaipilot.cli.model.JunitLlmSessionRequest;
 import com.jaipilot.cli.model.JunitLlmSessionResult;
-import com.jaipilot.cli.process.BuildTool;
-import com.jaipilot.cli.process.ExecutionResult;
-import com.jaipilot.cli.process.GradleCommandBuilder;
-import com.jaipilot.cli.process.MavenCommandBuilder;
-import com.jaipilot.cli.process.ProcessExecutor;
-import java.io.File;
 import java.io.PrintWriter;
 import java.io.Writer;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 
 public final class JunitLlmSessionRunner {
 
-    private static final int MAX_INTERACTIONS = 10;
+    private static final int MAX_INTERACTIONS = 100;
     private static final int MAX_FETCH_ATTEMPTS = 120;
     private static final long FETCH_DELAY_MILLIS = 1_000L;
-    private static final String MISSING_CONTEXT_CLASS_PLACEHOLDER = "Class not found";
-    private static final String MAVEN_CLASSPATH_OUTPUT_FILE = ".classpath.txt";
-    private static final String GRADLE_CLASSPATH_OUTPUT_FILE = ".gradle-classpath.txt";
-    private static final Duration CONTEXT_RESOLUTION_TIMEOUT = Duration.ofSeconds(120);
+    private static final Duration BASH_COMMAND_TIMEOUT = Duration.ofMinutes(5);
     private static final PrintWriter QUIET_WRITER = new PrintWriter(Writer.nullWriter());
-    private static final String GRADLE_CLASSPATH_INIT_SCRIPT = """
-            allprojects { project ->
-                project.tasks.register("jaipilotWriteCompileClasspath") {
-                    doLast {
-                        String outputPath = project.findProperty("jaipilotClasspathOutput")?.toString()
-                        if (!outputPath) {
-                            throw new GradleException("Missing -PjaipilotClasspathOutput")
-                        }
-                        def javaPluginApplied = project.plugins.hasPlugin("java")
-                                || project.plugins.hasPlugin("java-library")
-                        def entries = new LinkedHashSet<String>()
-                        if (javaPluginApplied) {
-                            def sourceSets = project.extensions.findByName("sourceSets")
-                            def mainSourceSet = sourceSets == null ? null : sourceSets.findByName("main")
-                            if (mainSourceSet != null) {
-                                mainSourceSet.output.classesDirs.files.each { file ->
-                                    if (file != null) {
-                                        entries.add(file.absolutePath)
-                                    }
-                                }
-                                if (mainSourceSet.output.resourcesDir != null) {
-                                    entries.add(mainSourceSet.output.resourcesDir.absolutePath)
-                                }
-                                mainSourceSet.compileClasspath.files.each { file ->
-                                    if (file != null) {
-                                        entries.add(file.absolutePath)
-                                    }
-                                }
-                            }
-                        }
-                        new File(outputPath).text = entries.join(File.pathSeparator)
-                    }
-                }
-            }
-            """;
 
     private final JunitLlmBackendClient backendClient;
     private final ProjectFileService fileService;
-    private final UsedContextClassPathCache usedContextClassPathCache;
-    private final JunitLlmConsoleLogger consoleLogger;
-    private final MavenCommandBuilder mavenCommandBuilder;
-    private final GradleCommandBuilder gradleCommandBuilder;
+    private final ConsoleLogger consoleLogger;
     private final ProcessExecutor processExecutor;
-    private final MockitoVersionResolver mockitoVersionResolver;
 
     public JunitLlmSessionRunner(
             JunitLlmBackendClient backendClient,
             ProjectFileService fileService,
-            UsedContextClassPathCache usedContextClassPathCache,
-            JunitLlmConsoleLogger consoleLogger
+            ConsoleLogger consoleLogger
     ) {
         this(
                 backendClient,
                 fileService,
-                usedContextClassPathCache,
                 consoleLogger,
-                new MavenCommandBuilder(),
-                new GradleCommandBuilder(),
-                new ProcessExecutor(),
-                new MockitoVersionResolver(fileService)
+                new ProcessExecutor()
         );
     }
 
     JunitLlmSessionRunner(
             JunitLlmBackendClient backendClient,
             ProjectFileService fileService,
-            UsedContextClassPathCache usedContextClassPathCache,
-            JunitLlmConsoleLogger consoleLogger,
-            MavenCommandBuilder mavenCommandBuilder,
-            GradleCommandBuilder gradleCommandBuilder,
-            ProcessExecutor processExecutor,
-            MockitoVersionResolver mockitoVersionResolver
+            ConsoleLogger consoleLogger,
+            ProcessExecutor processExecutor
     ) {
         this.backendClient = backendClient;
         this.fileService = fileService;
-        this.usedContextClassPathCache = usedContextClassPathCache;
         this.consoleLogger = consoleLogger;
-        this.mavenCommandBuilder = mavenCommandBuilder == null ? new MavenCommandBuilder() : mavenCommandBuilder;
-        this.gradleCommandBuilder = gradleCommandBuilder == null ? new GradleCommandBuilder() : gradleCommandBuilder;
         this.processExecutor = processExecutor == null ? new ProcessExecutor() : processExecutor;
-        this.mockitoVersionResolver = mockitoVersionResolver == null
-                ? new MockitoVersionResolver(fileService)
-                : mockitoVersionResolver;
     }
 
     public JunitLlmSessionResult run(JunitLlmSessionRequest sessionRequest) throws Exception {
         String cutCode = fileService.readFile(sessionRequest.cutPath());
         String cutName = fileService.stripJavaExtension(sessionRequest.cutPath().getFileName().toString());
         String testClassName = fileService.stripJavaExtension(sessionRequest.outputPath().getFileName().toString());
-        Path cacheKeyPath = cacheKeyPath(sessionRequest);
-        List<String> importedContextPaths = fileService.resolveImportedContextClassPaths(
-                sessionRequest.projectRoot(),
-                sessionRequest.cutPath()
-        );
-        List<String> cachedContextPaths = usedContextClassPathCache.read(cacheKeyPath);
-        consoleLogger.announceCacheRead(cacheKeyPath, cachedContextPaths);
-        String mockitoVersion = mockitoVersionResolver.resolve(
-                sessionRequest.projectRoot(),
-                sessionRequest.cutPath()
-        );
+        String mockitoVersion = null;
 
         String currentSessionId = blankToNull(sessionRequest.sessionId());
         String currentTestCode = normalizeNullableText(sessionRequest.newTestClassCode());
+        String clientLogs = blankToNull(sessionRequest.clientLogs());
         List<String> requestedContextClasses = List.of();
 
         for (int interaction = 1; interaction <= MAX_INTERACTIONS; interaction++) {
@@ -148,16 +74,10 @@ public final class JunitLlmSessionRunner {
                     testClassName,
                     mockitoVersion,
                     cutCode,
-                    buildCachedContextClasses(
-                            sessionRequest.projectRoot(),
-                            sessionRequest.cutPath(),
-                            importedContextPaths,
-                            cachedContextPaths
-                    ),
                     normalizeText(sessionRequest.initialTestClassCode()),
                     requestedContextClasses,
                     normalizeText(currentTestCode),
-                    blankToNull(sessionRequest.clientLogs())
+                    clientLogs
             );
             InvokeJunitLlmResponse invokeResponse = backendClient.invoke(invokeRequest);
             currentSessionId = firstNonBlank(invokeResponse.sessionId(), currentSessionId);
@@ -166,25 +86,36 @@ public final class JunitLlmSessionRunner {
             currentSessionId = mergeSessionId(currentSessionId, fetchJobResponse);
 
             FetchJobResponse.FetchJobOutput output = requireOutput(fetchJobResponse);
-            List<String> usedContextClassPaths = output.usedContextClassPaths() == null
-                    ? List.of()
-                    : output.usedContextClassPaths();
-            usedContextClassPathCache.write(cacheKeyPath, usedContextClassPaths);
+
             boolean hasFinalTestFile = output.finalTestFile() != null && !output.finalTestFile().isBlank();
             if (hasFinalTestFile) {
                 currentTestCode = output.finalTestFile();
             }
 
-            List<String> requiredContextPaths = output.requiredContextClassPaths();
-            if (requiredContextPaths != null && !requiredContextPaths.isEmpty()) {
+            List<String> requiredContextPaths = normalizeList(output.requiredContextClassPaths());
+            if (!requiredContextPaths.isEmpty()) {
                 printContextPaths(requiredContextPaths);
-                requestedContextClasses = resolveRequiredContextClassesViaJavap(
-                        sessionRequest,
+                requestedContextClasses = fileService.readContextEntries(
+                        sessionRequest.projectRoot(),
+                        sessionRequest.cutPath(),
                         requiredContextPaths
                 );
-                if (!hasFinalTestFile) {
-                    continue;
+            } else {
+                requestedContextClasses = List.of();
+            }
+
+            List<String> pendingBashCommands = normalizeList(output.pendingBashCommands());
+            if (!pendingBashCommands.isEmpty()) {
+                clientLogs = executePendingBashCommands(sessionRequest.projectRoot(), pendingBashCommands);
+                if (!requestedContextClasses.isEmpty()) {
+                    clientLogs = appendContextSummary(clientLogs, requiredContextPaths);
                 }
+                continue;
+            }
+
+            clientLogs = null;
+            if (!requestedContextClasses.isEmpty()) {
+                continue;
             }
 
             if (currentTestCode == null || currentTestCode.isBlank()) {
@@ -194,8 +125,7 @@ public final class JunitLlmSessionRunner {
             fileService.writeFile(sessionRequest.outputPath(), currentTestCode);
             return new JunitLlmSessionResult(
                     currentSessionId,
-                    sessionRequest.outputPath(),
-                    usedContextClassPaths
+                    sessionRequest.outputPath()
             );
         }
 
@@ -287,219 +217,230 @@ public final class JunitLlmSessionRunner {
         }
     }
 
-    private Path cacheKeyPath(JunitLlmSessionRequest sessionRequest) {
-        return sessionRequest.cutPath().toAbsolutePath().normalize();
-    }
-
-    private List<String> resolveRequiredContextClassesViaJavap(
-            JunitLlmSessionRequest sessionRequest,
-            List<String> requiredContextClassNames
-    ) {
-        if (requiredContextClassNames == null || requiredContextClassNames.isEmpty()) {
+    private List<String> normalizeList(List<String> values) {
+        if (values == null || values.isEmpty()) {
             return List.of();
         }
-
-        BuildTool buildTool = fileService.detectBuildTool(sessionRequest.projectRoot(), null).orElse(null);
-        if (buildTool == BuildTool.MAVEN) {
-            return resolveRequiredContextClassesViaMavenJavap(sessionRequest, requiredContextClassNames);
-        }
-        if (buildTool == BuildTool.GRADLE) {
-            return resolveRequiredContextClassesViaGradleJavap(sessionRequest, requiredContextClassNames);
-        }
-        return missingContextClasses(requiredContextClassNames);
-    }
-
-    private List<String> resolveRequiredContextClassesViaMavenJavap(
-            JunitLlmSessionRequest sessionRequest,
-            List<String> requiredContextClassNames
-    ) {
-        Path moduleRoot = resolveMavenModuleRoot(sessionRequest);
-        ExecutionResult classpathBuildResult;
-        try {
-            classpathBuildResult = processExecutor.execute(
-                    mavenCommandBuilder.buildCompileClasspath(
-                            moduleRoot,
-                            null,
-                            List.of("-q"),
-                            MAVEN_CLASSPATH_OUTPUT_FILE
-                    ),
-                    moduleRoot,
-                    CONTEXT_RESOLUTION_TIMEOUT,
-                    false,
-                    QUIET_WRITER
-            );
-        } catch (Exception exception) {
-            return missingContextClasses(requiredContextClassNames);
-        }
-        if (!isSuccessful(classpathBuildResult)) {
-            return missingContextClasses(requiredContextClassNames);
-        }
-
-        Path classpathFile = moduleRoot.resolve(MAVEN_CLASSPATH_OUTPUT_FILE).toAbsolutePath().normalize();
-        if (!Files.isRegularFile(classpathFile)) {
-            return missingContextClasses(requiredContextClassNames);
-        }
-
-        String dependencyClasspath;
-        try {
-            dependencyClasspath = Files.readString(classpathFile, StandardCharsets.UTF_8).trim();
-        } catch (Exception exception) {
-            return missingContextClasses(requiredContextClassNames);
-        }
-        String javapClasspath = moduleRoot.resolve("target/classes").toAbsolutePath().normalize()
-                + (dependencyClasspath.isBlank() ? "" : File.pathSeparator + dependencyClasspath);
-        return runJavapForClasses(moduleRoot, javapClasspath, requiredContextClassNames);
-    }
-
-    private List<String> resolveRequiredContextClassesViaGradleJavap(
-            JunitLlmSessionRequest sessionRequest,
-            List<String> requiredContextClassNames
-    ) {
-        Path projectRoot = sessionRequest.projectRoot().toAbsolutePath().normalize();
-        String gradleProjectPath = fileService.deriveGradleProjectPath(projectRoot, sessionRequest.cutPath());
-        Path classpathFile = projectRoot.resolve(GRADLE_CLASSPATH_OUTPUT_FILE).toAbsolutePath().normalize();
-        Path initScript;
-        try {
-            initScript = Files.createTempFile("jaipilot-gradle-classpath-", ".gradle");
-            Files.writeString(initScript, GRADLE_CLASSPATH_INIT_SCRIPT, StandardCharsets.UTF_8);
-        } catch (Exception exception) {
-            return missingContextClasses(requiredContextClassNames);
-        }
-
-        ExecutionResult classpathBuildResult;
-        try {
-            classpathBuildResult = processExecutor.execute(
-                    gradleCommandBuilder.buildCompileClasspath(
-                            projectRoot,
-                            null,
-                            List.of("--quiet"),
-                            gradleProjectPath,
-                            initScript,
-                            classpathFile
-                    ),
-                    projectRoot,
-                    CONTEXT_RESOLUTION_TIMEOUT,
-                    false,
-                    QUIET_WRITER
-            );
-        } catch (Exception exception) {
-            tryDelete(initScript);
-            return missingContextClasses(requiredContextClassNames);
-        }
-        tryDelete(initScript);
-        if (!isSuccessful(classpathBuildResult) || !Files.isRegularFile(classpathFile)) {
-            return missingContextClasses(requiredContextClassNames);
-        }
-
-        String javapClasspath;
-        try {
-            javapClasspath = Files.readString(classpathFile, StandardCharsets.UTF_8).trim();
-        } catch (Exception exception) {
-            return missingContextClasses(requiredContextClassNames);
-        }
-        if (javapClasspath.isBlank()) {
-            return missingContextClasses(requiredContextClassNames);
-        }
-        return runJavapForClasses(projectRoot, javapClasspath, requiredContextClassNames);
-    }
-
-    private List<String> runJavapForClasses(Path workingDirectory, String javapClasspath, List<String> classNames) {
-        List<String> resolvedContextClasses = new ArrayList<>();
-        for (String requiredContextClassName : classNames) {
-            String className = normalizeRequiredClassName(requiredContextClassName);
-            if (className.isBlank()) {
-                resolvedContextClasses.add(MISSING_CONTEXT_CLASS_PLACEHOLDER);
-                continue;
-            }
-            ExecutionResult javapResult;
-            try {
-                javapResult = processExecutor.execute(
-                        List.of("javap", "-classpath", javapClasspath, className),
-                        workingDirectory,
-                        CONTEXT_RESOLUTION_TIMEOUT,
-                        false,
-                        QUIET_WRITER
-                );
-            } catch (Exception exception) {
-                resolvedContextClasses.add(MISSING_CONTEXT_CLASS_PLACEHOLDER);
-                continue;
-            }
-            if (!isSuccessful(javapResult) || javapResult.output() == null || javapResult.output().isBlank()) {
-                resolvedContextClasses.add(MISSING_CONTEXT_CLASS_PLACEHOLDER);
-            } else {
-                resolvedContextClasses.add(javapResult.output());
-            }
-        }
-        return List.copyOf(resolvedContextClasses);
-    }
-
-    private String normalizeRequiredClassName(String value) {
-        if (value == null || value.isBlank()) {
-            return "";
-        }
-        String normalized = value.trim();
-        if (normalized.startsWith("import ")) {
-            normalized = normalized.substring("import ".length()).trim();
-        }
-        if (normalized.endsWith(";")) {
-            normalized = normalized.substring(0, normalized.length() - 1).trim();
-        }
-        if (normalized.endsWith(".class")) {
-            normalized = normalized.substring(0, normalized.length() - ".class".length()).trim();
-        }
-        if (normalized.endsWith(".java")) {
-            normalized = normalized.substring(0, normalized.length() - ".java".length()).trim();
-        }
-        if (normalized.startsWith("src/main/java/")) {
-            normalized = normalized.substring("src/main/java/".length());
-        }
-        if (normalized.startsWith("src/test/java/")) {
-            normalized = normalized.substring("src/test/java/".length());
-        }
-        normalized = normalized.replace('/', '.').replace('\\', '.');
-        while (normalized.startsWith(".")) {
-            normalized = normalized.substring(1);
-        }
-        while (normalized.endsWith(".")) {
-            normalized = normalized.substring(0, normalized.length() - 1);
-        }
-        return normalized;
-    }
-
-    private void tryDelete(Path path) {
-        try {
-            Files.deleteIfExists(path);
-        } catch (Exception ignored) {
-            // Best-effort cleanup.
-        }
-    }
-
-    private Path resolveMavenModuleRoot(JunitLlmSessionRequest sessionRequest) {
-        Path moduleRoot = fileService.findNearestMavenProjectRoot(sessionRequest.cutPath());
-        if (moduleRoot != null) {
-            return moduleRoot.toAbsolutePath().normalize();
-        }
-        return sessionRequest.projectRoot().toAbsolutePath().normalize();
-    }
-
-    private List<String> missingContextClasses(List<String> requiredContextClassNames) {
-        return requiredContextClassNames.stream()
-                .map(ignored -> MISSING_CONTEXT_CLASS_PLACEHOLDER)
+        return values.stream()
+                .filter(value -> value != null && !value.isBlank())
                 .toList();
     }
 
-    private boolean isSuccessful(ExecutionResult result) {
-        return result != null && !result.timedOut() && result.exitCode() == 0;
+    private String executePendingBashCommands(Path projectRoot, List<String> pendingBashCommands) {
+        Path workingDirectory = projectRoot.toAbsolutePath().normalize();
+        List<String> normalizedCommands = pendingBashCommands.stream()
+                .map(command -> command == null ? "" : command.trim())
+                .filter(command -> !command.isBlank())
+                .toList();
+        if (normalizedCommands.isEmpty()) {
+            return null;
+        }
+
+        StringBuilder logs = new StringBuilder();
+        for (String command : normalizedCommands) {
+            consoleLogger.info("Running backend command: " + command);
+            logs.append("$ ").append(command).append(System.lineSeparator());
+
+            try {
+                ProcessExecutor.ExecutionResult result = processExecutor.execute(
+                        shellCommand(command),
+                        workingDirectory,
+                        BASH_COMMAND_TIMEOUT,
+                        false,
+                        QUIET_WRITER
+                );
+                appendCommandOutput(logs, result.output());
+                logs.append("[exitCode=")
+                        .append(result.exitCode())
+                        .append(", timedOut=")
+                        .append(result.timedOut())
+                        .append("]")
+                        .append(System.lineSeparator());
+            } catch (Exception exception) {
+                logs.append("Command execution failed: ")
+                        .append(exception.getMessage())
+                        .append(System.lineSeparator());
+            }
+
+            logs.append(System.lineSeparator());
+        }
+        return logs.toString().trim();
     }
 
-    private List<String> buildCachedContextClasses(
-            Path projectRoot,
-            Path preferredSourcePath,
-            List<String> importedContextPaths,
-            List<String> cachedContextPaths
-    ) {
-        Set<String> contextPaths = new LinkedHashSet<>(importedContextPaths);
-        contextPaths.addAll(cachedContextPaths);
-        return fileService.readCachedContextEntries(projectRoot, preferredSourcePath, List.copyOf(contextPaths));
+    private String appendContextSummary(String logs, List<String> requiredContextPaths) {
+        StringBuilder builder = new StringBuilder();
+        if (logs != null && !logs.isBlank()) {
+            builder.append(logs).append(System.lineSeparator()).append(System.lineSeparator());
+        }
+        builder.append("Context files resolved:").append(System.lineSeparator());
+        for (String path : requiredContextPaths) {
+            builder.append("- ").append(path).append(System.lineSeparator());
+        }
+        return builder.toString().trim();
+    }
+
+    private List<String> shellCommand(String command) {
+        String osName = System.getProperty("os.name", "");
+        boolean windows = osName != null && osName.toLowerCase().contains("win");
+        if (windows) {
+            return List.of("cmd", "/c", command);
+        }
+        return List.of("sh", "-lc", command);
+    }
+
+    private void appendCommandOutput(StringBuilder logs, String output) {
+        if (output == null || output.isBlank()) {
+            return;
+        }
+        logs.append(output);
+        if (!output.endsWith("\n") && !output.endsWith("\r")) {
+            logs.append(System.lineSeparator());
+        }
+    }
+
+    public static final class ConsoleLogger {
+
+        private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss");
+        private static final String ANSI_GREEN = "\u001B[32m";
+        private static final String ANSI_RED = "\u001B[31m";
+        private static final String ANSI_RESET = "\u001B[0m";
+
+        private final PrintWriter writer;
+
+        public ConsoleLogger(PrintWriter writer) {
+            this.writer = writer;
+        }
+
+        public void announceStatus(JunitLlmOperation operation) {
+            if (operation == JunitLlmOperation.FIX) {
+                info("Fixing...");
+                return;
+            }
+            info("Generating...");
+        }
+
+        public void announceRequiredContextPath(String contextPath) {
+            info("Context file: " + contextPath);
+        }
+
+        public void announceTestFileDiff(String previousContent, String currentContent) {
+            info("Source diff:");
+            List<DiffLine> diffLines = buildDiffLines(previousContent, currentContent);
+            if (diffLines.isEmpty()) {
+                info("No file changes.");
+                return;
+            }
+            for (DiffLine diffLine : diffLines) {
+                if (diffLine.type() == DiffType.ADD) {
+                    raw(colorize(ANSI_GREEN, "+ " + diffLine.value()));
+                } else if (diffLine.type() == DiffType.REMOVE) {
+                    raw(colorize(ANSI_RED, "- " + diffLine.value()));
+                }
+            }
+        }
+
+        public void announceTestFile(Path outputPath) {
+            info("Test file: " + outputPath);
+        }
+
+        public void announceTotalTime(Duration duration) {
+            info("Total time: " + formatDuration(duration));
+        }
+
+        public void error(String message) {
+            info("ERROR: " + message);
+        }
+
+        public void info(String message) {
+            raw(message);
+        }
+
+        private void raw(String message) {
+            writer.println("[" + LocalTime.now().format(TIMESTAMP_FORMAT) + "] " + message);
+            writer.flush();
+        }
+
+        private String formatDuration(Duration duration) {
+            long totalMillis = duration.toMillis();
+            if (totalMillis < 1_000) {
+                return totalMillis + "ms";
+            }
+            return String.format("%.1fs", totalMillis / 1_000.0);
+        }
+
+        private String colorize(String color, String message) {
+            return color + message + ANSI_RESET;
+        }
+
+        private List<DiffLine> buildDiffLines(String previousContent, String currentContent) {
+            List<String> previousLines = toLines(previousContent);
+            List<String> currentLines = toLines(currentContent);
+            int[][] lcsLengths = buildLcsLengths(previousLines, currentLines);
+            List<DiffLine> diffLines = new ArrayList<>();
+
+            int previousIndex = 0;
+            int currentIndex = 0;
+            while (previousIndex < previousLines.size() && currentIndex < currentLines.size()) {
+                String previousLine = previousLines.get(previousIndex);
+                String currentLine = currentLines.get(currentIndex);
+                if (previousLine.equals(currentLine)) {
+                    previousIndex++;
+                    currentIndex++;
+                    continue;
+                }
+                if (lcsLengths[previousIndex + 1][currentIndex] >= lcsLengths[previousIndex][currentIndex + 1]) {
+                    diffLines.add(new DiffLine(DiffType.REMOVE, previousLine));
+                    previousIndex++;
+                } else {
+                    diffLines.add(new DiffLine(DiffType.ADD, currentLine));
+                    currentIndex++;
+                }
+            }
+
+            while (previousIndex < previousLines.size()) {
+                diffLines.add(new DiffLine(DiffType.REMOVE, previousLines.get(previousIndex++)));
+            }
+            while (currentIndex < currentLines.size()) {
+                diffLines.add(new DiffLine(DiffType.ADD, currentLines.get(currentIndex++)));
+            }
+            return diffLines;
+        }
+
+        private int[][] buildLcsLengths(List<String> previousLines, List<String> currentLines) {
+            int[][] lcsLengths = new int[previousLines.size() + 1][currentLines.size() + 1];
+            for (int previousIndex = previousLines.size() - 1; previousIndex >= 0; previousIndex--) {
+                for (int currentIndex = currentLines.size() - 1; currentIndex >= 0; currentIndex--) {
+                    if (previousLines.get(previousIndex).equals(currentLines.get(currentIndex))) {
+                        lcsLengths[previousIndex][currentIndex] = lcsLengths[previousIndex + 1][currentIndex + 1] + 1;
+                    } else {
+                        lcsLengths[previousIndex][currentIndex] = Math.max(
+                                lcsLengths[previousIndex + 1][currentIndex],
+                                lcsLengths[previousIndex][currentIndex + 1]
+                        );
+                    }
+                }
+            }
+            return lcsLengths;
+        }
+
+        private List<String> toLines(String content) {
+            if (content == null || content.isEmpty()) {
+                return List.of();
+            }
+            String normalizedContent = content.replace("\r\n", "\n").replace('\r', '\n');
+            List<String> lines = new ArrayList<>(List.of(normalizedContent.split("\n", -1)));
+            if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
+                lines.remove(lines.size() - 1);
+            }
+            return lines;
+        }
+
+        private enum DiffType {
+            ADD,
+            REMOVE
+        }
+
+        private record DiffLine(DiffType type, String value) {
+        }
     }
 }

@@ -1,4 +1,4 @@
-package com.jaipilot.cli.process;
+package com.jaipilot.cli.service;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -75,5 +75,13 @@ public final class ProcessExecutor {
                     .append(exception.getMessage())
                     .append(System.lineSeparator());
         }
+    }
+
+    public record ExecutionResult(
+            List<String> command,
+            int exitCode,
+            boolean timedOut,
+            String output
+    ) {
     }
 }
