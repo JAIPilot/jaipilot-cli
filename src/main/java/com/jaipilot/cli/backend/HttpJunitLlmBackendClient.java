@@ -2,7 +2,6 @@ package com.jaipilot.cli.backend;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.jaipilot.cli.http.CurlHttpClient;
 import com.jaipilot.cli.http.JaipilotNetworkErrors;
@@ -229,13 +228,11 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
     private String buildInvokeRequestBody(InvokeJunitLlmRequest request) throws IOException {
         ObjectNode root = objectMapper.createObjectNode();
         putOptionalString(root, "sessionId", request.sessionId());
-        putString(root, "type", request.type());
         putString(root, "cutName", request.cutName());
-        putString(root, "testClassName", request.testClassName());
+        putOptionalString(root, "testFilePath", request.testFilePath());
         putOptionalString(root, "mockitoVersion", request.mockitoVersion());
         putString(root, "cutCode", request.cutCode());
         putString(root, "initialTestClassCode", request.initialTestClassCode());
-        putStringArray(root, "contextClasses", request.contextClasses());
         putString(root, "newTestClassCode", request.newTestClassCode());
         putNullableString(root, "clientLogs", request.clientLogs());
         return objectMapper.writeValueAsString(root);
@@ -297,15 +294,4 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
         node.put(fieldName, value);
     }
 
-    private static void putStringArray(ObjectNode node, String fieldName, java.util.List<String> values) {
-        ArrayNode arrayNode = node.putArray(fieldName);
-        if (values == null) {
-            return;
-        }
-        for (String value : values) {
-            if (value != null) {
-                arrayNode.add(value);
-            }
-        }
-    }
 }

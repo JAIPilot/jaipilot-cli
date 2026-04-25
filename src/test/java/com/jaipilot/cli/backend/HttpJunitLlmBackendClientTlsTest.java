@@ -3,7 +3,6 @@ package com.jaipilot.cli.backend;
 import com.jaipilot.cli.model.InvokeJunitLlmRequest;
 import com.jaipilot.cli.testutil.HttpsTestServer;
 import java.io.IOException;
-import java.util.List;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -30,13 +29,11 @@ class HttpJunitLlmBackendClientTlsTest {
     private InvokeJunitLlmRequest sampleRequest() {
         return new InvokeJunitLlmRequest(
                 null,
-                "generate",
                 "CrashController",
-                "CrashControllerTest",
+                "src/test/java/com/example/CrashControllerTest.java",
                 "5.11.0",
                 "class body",
                 "",
-                List.of(),
                 "",
                 null
         );

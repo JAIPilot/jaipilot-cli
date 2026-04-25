@@ -31,7 +31,7 @@ class CurlHttpClientTest {
                         "Authorization", "Bearer token-123",
                         "Content-Type", "application/json"
                 ),
-                "{\"type\":\"generate\"}",
+                "{\"cutName\":\"CrashController\"}",
                 Duration.ofSeconds(9)
         );
 

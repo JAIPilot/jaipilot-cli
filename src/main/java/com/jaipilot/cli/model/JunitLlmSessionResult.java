@@ -4,6 +4,8 @@ import java.nio.file.Path;
 
 public record JunitLlmSessionResult(
         String sessionId,
-        Path outputPath
+        Path outputPath,
+        String previousOutputContent,
+        String currentOutputContent
 ) {
 }

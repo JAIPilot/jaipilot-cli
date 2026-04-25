@@ -52,13 +52,11 @@ class HttpJunitLlmBackendClientTest {
 
         InvokeJunitLlmResponse response = client.invoke(new InvokeJunitLlmRequest(
                 null,
-                "generate",
                 "CrashController",
-                "CrashControllerTest",
+                "src/test/java/com/example/CrashControllerTest.java",
                 "5.11.0",
                 "class body",
                 "",
-                List.of("com/example/Helper.java =\npackage com.example;\n"),
                 "",
                 null
         ));
@@ -68,15 +66,16 @@ class HttpJunitLlmBackendClientTest {
         assertEquals("Bearer token-123", authorization.get());
         assertEquals("application/json", accept.get());
         assertTrue(contentType.get().startsWith("application/json"));
-        assertTrue(requestBody.get().contains("\"type\":\"generate\""));
+        assertFalse(requestBody.get().contains("\"type\""));
         assertTrue(requestBody.get().contains("\"cutName\":\"CrashController\""));
-        assertTrue(requestBody.get().contains("\"testClassName\":\"CrashControllerTest\""));
+        assertTrue(requestBody.get().contains("\"testFilePath\":\"src/test/java/com/example/CrashControllerTest.java\""));
         assertTrue(requestBody.get().contains("\"mockitoVersion\":\"5.11.0\""));
         assertTrue(requestBody.get().contains("\"cutCode\":\"class body\""));
         assertTrue(requestBody.get().contains("\"initialTestClassCode\":\"\""));
-        assertTrue(requestBody.get().contains("\"contextClasses\":[\"com/example/Helper.java =\\npackage com.example;\\n\"]"));
         assertTrue(requestBody.get().contains("\"newTestClassCode\":\"\""));
         assertTrue(requestBody.get().contains("\"clientLogs\":null"));
+        assertFalse(requestBody.get().contains("\"testClassName\""));
+        assertFalse(requestBody.get().contains("\"contextClasses\""));
         assertFalse(requestBody.get().contains("\"cachedContextClasses\""));
         assertFalse(requestBody.get().contains("attemptNumber"));
         assertFalse(requestBody.get().contains("\"sessionId\""));
@@ -103,13 +102,11 @@ class HttpJunitLlmBackendClientTest {
 
         client.invoke(new InvokeJunitLlmRequest(
                 null,
-                "generate",
                 "CrashController",
-                "CrashControllerTest",
+                null,
                 null,
                 "class body",
                 "",
-                List.of(),
                 "",
                 null
         ));
@@ -127,7 +124,7 @@ class HttpJunitLlmBackendClientTest {
             writeJson(
                     exchange,
                     """
-                    {"status":"done","output":{"sessionId":"session-1","finalTestFile":"class body","pendingBashCommands":["mvn test"]}}
+                    {"status":"done","output":{"sessionId":"session-1","finalTestFilePath":"src/test/java/com/example/CrashControllerTest.java","finalTestFile":"class body","pendingBashCommands":["mvn test"]}}
                     """
             );
         });
@@ -140,6 +137,7 @@ class HttpJunitLlmBackendClientTest {
         assertEquals("id=job+1", query.get());
         assertEquals("done", response.status());
         assertEquals("session-1", response.output().sessionId());
+        assertEquals("src/test/java/com/example/CrashControllerTest.java", response.output().finalTestFilePath());
         assertEquals("class body", response.output().finalTestFile());
         assertEquals(List.of("mvn test"), response.output().pendingBashCommands());
     }
@@ -197,7 +195,7 @@ class HttpJunitLlmBackendClientTest {
             }
             writeJson(
                     exchange,
-                    "{\"status\":\"done\",\"output\":{\"sessionId\":\"session-1\",\"finalTestFile\":\"class body\"}}"
+                    "{\"status\":\"done\",\"output\":{\"sessionId\":\"session-1\",\"finalTestFilePath\":\"src/test/java/com/example/CrashControllerTest.java\",\"finalTestFile\":\"class body\"}}"
             );
         });
         server.start();
@@ -260,13 +258,11 @@ class HttpJunitLlmBackendClientTest {
     private InvokeJunitLlmRequest sampleRequest() {
         return new InvokeJunitLlmRequest(
                 null,
-                "generate",
                 "CrashController",
-                "CrashControllerTest",
+                "src/test/java/com/example/CrashControllerTest.java",
                 "5.11.0",
                 "class body",
                 "",
-                List.of(),
                 "",
                 null
         );

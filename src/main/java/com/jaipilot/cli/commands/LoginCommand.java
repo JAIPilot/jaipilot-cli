@@ -25,17 +25,21 @@ public final class LoginCommand implements Callable<Integer> {
             index = "0",
             arity = "0..1",
             paramLabel = "<token>",
-            description = "JAIPilot auth token. If omitted, JAIPILOT_AUTH_TOKEN is used."
+            description = "JAIPilot auth token or license key. If omitted, JAIPILOT_AUTH_TOKEN or JAIPILOT_LICENSE_KEY is used."
     )
     private String tokenArg;
 
     @Override
     public Integer call() {
-        String authToken = firstNonBlank(tokenArg, System.getenv("JAIPILOT_AUTH_TOKEN"));
+        String authToken = firstNonBlank(
+                tokenArg,
+                System.getenv("JAIPILOT_AUTH_TOKEN"),
+                System.getenv("JAIPILOT_LICENSE_KEY")
+        );
         if (authToken == null) {
             throw new CommandLine.ParameterException(
                     spec.commandLine(),
-                    "Provide <token> or set JAIPILOT_AUTH_TOKEN."
+                    "Provide <token> or set JAIPILOT_AUTH_TOKEN / JAIPILOT_LICENSE_KEY."
             );
         }
 

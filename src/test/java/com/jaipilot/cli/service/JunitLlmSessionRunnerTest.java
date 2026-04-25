@@ -4,7 +4,6 @@ import com.jaipilot.cli.backend.JunitLlmBackendClient;
 import com.jaipilot.cli.model.FetchJobResponse;
 import com.jaipilot.cli.model.InvokeJunitLlmRequest;
 import com.jaipilot.cli.model.InvokeJunitLlmResponse;
-import com.jaipilot.cli.model.JunitLlmOperation;
 import com.jaipilot.cli.model.JunitLlmSessionRequest;
 import com.jaipilot.cli.model.JunitLlmSessionResult;
 import java.io.PrintWriter;
@@ -17,7 +16,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JunitLlmSessionRunnerTest {
@@ -41,12 +39,14 @@ class JunitLlmSessionRunnerTest {
         StubBackendClient backendClient = new StubBackendClient(
                 doneOutput(
                         "session-1",
+                        "src/test/java/com/example/CrashControllerTest.java",
                         "",
                         List.of(),
                         List.of("echo hello-from-backend")
                 ),
                 doneOutput(
                         "session-1",
+                        "src/test/java/com/example/CrashControllerTest.java",
                         "package com.example;\n\nclass CrashControllerTest {\n}\n",
                         List.of(),
                         List.of()
@@ -62,8 +62,7 @@ class JunitLlmSessionRunnerTest {
         JunitLlmSessionResult result = runner.run(new JunitLlmSessionRequest(
                 tempDir,
                 cutPath,
-                outputPath,
-                JunitLlmOperation.GENERATE,
+                null,
                 null,
                 "",
                 "",
@@ -72,6 +71,7 @@ class JunitLlmSessionRunnerTest {
 
         assertEquals(2, backendClient.requests.size());
         assertEquals("session-1", result.sessionId());
+        assertEquals(outputPath, result.outputPath());
         assertEquals(
                 "package com.example;\n\nclass CrashControllerTest {\n}\n",
                 Files.readString(outputPath)
@@ -81,70 +81,6 @@ class JunitLlmSessionRunnerTest {
         assertTrue(secondRequestLogs.contains("$ echo hello-from-backend"));
         assertTrue(secondRequestLogs.contains("hello-from-backend"));
         assertTrue(secondRequestLogs.contains("[exitCode=0"));
-    }
-
-    @Test
-    void runResubmitsRequestedContextFromWorkspacePath() throws Exception {
-        Path cutPath = write(
-                "src/main/java/com/example/CrashController.java",
-                """
-                package com.example;
-
-                public class CrashController {
-                }
-                """
-        );
-        write(
-                "src/main/java/com/example/support/RequestedContext.java",
-                """
-                package com.example.support;
-
-                public class RequestedContext {
-                }
-                """
-        );
-        Path outputPath = tempDir.resolve("src/test/java/com/example/CrashControllerTest.java");
-
-        StubBackendClient backendClient = new StubBackendClient(
-                doneOutput(
-                        "session-2",
-                        "",
-                        List.of("com/example/support/RequestedContext.java"),
-                        List.of()
-                ),
-                doneOutput(
-                        "session-2",
-                        "package com.example;\n\nclass CrashControllerTest {\n}\n",
-                        List.of(),
-                        List.of()
-                )
-        );
-
-        JunitLlmSessionRunner runner = new JunitLlmSessionRunner(
-                backendClient,
-                new ProjectFileService(),
-                new JunitLlmSessionRunner.ConsoleLogger(new PrintWriter(new StringWriter(), true))
-        );
-
-        runner.run(new JunitLlmSessionRequest(
-                tempDir,
-                cutPath,
-                outputPath,
-                JunitLlmOperation.GENERATE,
-                null,
-                "",
-                "",
-                null
-        ));
-
-        assertEquals(2, backendClient.requests.size());
-        assertNull(backendClient.requests.get(1).clientLogs());
-        assertEquals(1, backendClient.requests.get(1).contextClasses().size());
-        assertTrue(
-                backendClient.requests.get(1).contextClasses().get(0).contains(
-                        "com/example/support/RequestedContext.java =\npackage com.example.support;"
-                )
-        );
     }
 
     @Test
@@ -174,6 +110,7 @@ class JunitLlmSessionRunnerTest {
 
     private static FetchJobResponse doneOutput(
             String sessionId,
+            String finalTestFilePath,
             String finalTestFile,
             List<String> requiredContextClassPaths,
             List<String> pendingBashCommands
@@ -182,6 +119,7 @@ class JunitLlmSessionRunnerTest {
                 "done",
                 new FetchJobResponse.FetchJobOutput(
                         sessionId,
+                        finalTestFilePath,
                         finalTestFile,
                         requiredContextClassPaths,
                         pendingBashCommands

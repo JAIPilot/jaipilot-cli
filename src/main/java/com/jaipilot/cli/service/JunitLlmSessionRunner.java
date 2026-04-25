@@ -4,11 +4,11 @@ import com.jaipilot.cli.backend.JunitLlmBackendClient;
 import com.jaipilot.cli.model.FetchJobResponse;
 import com.jaipilot.cli.model.InvokeJunitLlmRequest;
 import com.jaipilot.cli.model.InvokeJunitLlmResponse;
-import com.jaipilot.cli.model.JunitLlmOperation;
 import com.jaipilot.cli.model.JunitLlmSessionRequest;
 import com.jaipilot.cli.model.JunitLlmSessionResult;
 import java.io.PrintWriter;
 import java.io.Writer;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.LocalTime;
@@ -57,25 +57,22 @@ public final class JunitLlmSessionRunner {
     public JunitLlmSessionResult run(JunitLlmSessionRequest sessionRequest) throws Exception {
         String cutCode = fileService.readFile(sessionRequest.cutPath());
         String cutName = fileService.stripJavaExtension(sessionRequest.cutPath().getFileName().toString());
-        String testClassName = fileService.stripJavaExtension(sessionRequest.outputPath().getFileName().toString());
         String mockitoVersion = null;
 
         String currentSessionId = blankToNull(sessionRequest.sessionId());
+        String currentTestFilePath = blankToNull(sessionRequest.testFilePath());
         String currentTestCode = normalizeNullableText(sessionRequest.newTestClassCode());
         String clientLogs = blankToNull(sessionRequest.clientLogs());
-        List<String> requestedContextClasses = List.of();
 
         for (int interaction = 1; interaction <= MAX_INTERACTIONS; interaction++) {
-            consoleLogger.announceStatus(sessionRequest.operation());
+            consoleLogger.announceStatus();
             InvokeJunitLlmRequest invokeRequest = new InvokeJunitLlmRequest(
                     currentSessionId,
-                    sessionRequest.operation().apiValue(),
                     cutName,
-                    testClassName,
+                    currentTestFilePath,
                     mockitoVersion,
                     cutCode,
                     normalizeText(sessionRequest.initialTestClassCode()),
-                    requestedContextClasses,
                     normalizeText(currentTestCode),
                     clientLogs
             );
@@ -86,46 +83,41 @@ public final class JunitLlmSessionRunner {
             currentSessionId = mergeSessionId(currentSessionId, fetchJobResponse);
 
             FetchJobResponse.FetchJobOutput output = requireOutput(fetchJobResponse);
+            String nextTestFilePath = blankToNull(output.finalTestFilePath());
+            if (nextTestFilePath != null) {
+                currentTestFilePath = nextTestFilePath;
+            }
 
             boolean hasFinalTestFile = output.finalTestFile() != null && !output.finalTestFile().isBlank();
             if (hasFinalTestFile) {
                 currentTestCode = output.finalTestFile();
             }
 
-            List<String> requiredContextPaths = normalizeList(output.requiredContextClassPaths());
-            if (!requiredContextPaths.isEmpty()) {
-                printContextPaths(requiredContextPaths);
-                requestedContextClasses = fileService.readContextEntries(
-                        sessionRequest.projectRoot(),
-                        sessionRequest.cutPath(),
-                        requiredContextPaths
-                );
-            } else {
-                requestedContextClasses = List.of();
-            }
-
             List<String> pendingBashCommands = normalizeList(output.pendingBashCommands());
             if (!pendingBashCommands.isEmpty()) {
                 clientLogs = executePendingBashCommands(sessionRequest.projectRoot(), pendingBashCommands);
-                if (!requestedContextClasses.isEmpty()) {
-                    clientLogs = appendContextSummary(clientLogs, requiredContextPaths);
-                }
                 continue;
             }
 
             clientLogs = null;
-            if (!requestedContextClasses.isEmpty()) {
-                continue;
-            }
 
             if (currentTestCode == null || currentTestCode.isBlank()) {
                 throw new IllegalStateException("Backend did not return a test file.");
             }
+            if (currentTestFilePath == null || currentTestFilePath.isBlank()) {
+                throw new IllegalStateException("Backend did not return a test file path.");
+            }
 
-            fileService.writeFile(sessionRequest.outputPath(), currentTestCode);
+            Path outputPath = resolveOutputPath(sessionRequest.projectRoot(), currentTestFilePath);
+            String previousOutputContent = Files.isRegularFile(outputPath)
+                    ? fileService.readFile(outputPath)
+                    : "";
+            fileService.writeFile(outputPath, currentTestCode);
             return new JunitLlmSessionResult(
                     currentSessionId,
-                    sessionRequest.outputPath()
+                    outputPath,
+                    previousOutputContent,
+                    currentTestCode
             );
         }
 
@@ -162,6 +154,27 @@ public final class JunitLlmSessionRunner {
             ));
         }
         return response.output();
+    }
+
+    private Path resolveOutputPath(Path projectRoot, String backendOutputPath) {
+        String normalizedBackendPath = backendOutputPath == null
+                ? ""
+                : backendOutputPath.trim().replace('\\', '/');
+        if (normalizedBackendPath.isBlank()) {
+            throw new IllegalStateException("Backend returned an empty test file path.");
+        }
+
+        Path normalizedProjectRoot = projectRoot.toAbsolutePath().normalize();
+        Path relativePath = Path.of(normalizedBackendPath).normalize();
+        if (relativePath.isAbsolute()) {
+            throw new IllegalStateException("Backend returned an absolute test file path: " + backendOutputPath);
+        }
+
+        Path resolvedPath = normalizedProjectRoot.resolve(relativePath).normalize();
+        if (!resolvedPath.startsWith(normalizedProjectRoot)) {
+            throw new IllegalStateException("Backend test file path escapes the project root: " + backendOutputPath);
+        }
+        return resolvedPath;
     }
 
     private String mergeSessionId(String currentSessionId, FetchJobResponse response) {
@@ -209,12 +222,6 @@ public final class JunitLlmSessionRunner {
             return fallback;
         }
         return null;
-    }
-
-    private void printContextPaths(List<String> requiredContextPaths) {
-        for (String requiredContextPath : requiredContextPaths) {
-            consoleLogger.announceRequiredContextPath(requiredContextPath);
-        }
     }
 
     private List<String> normalizeList(List<String> values) {
@@ -267,18 +274,6 @@ public final class JunitLlmSessionRunner {
         return logs.toString().trim();
     }
 
-    private String appendContextSummary(String logs, List<String> requiredContextPaths) {
-        StringBuilder builder = new StringBuilder();
-        if (logs != null && !logs.isBlank()) {
-            builder.append(logs).append(System.lineSeparator()).append(System.lineSeparator());
-        }
-        builder.append("Context files resolved:").append(System.lineSeparator());
-        for (String path : requiredContextPaths) {
-            builder.append("- ").append(path).append(System.lineSeparator());
-        }
-        return builder.toString().trim();
-    }
-
     private List<String> shellCommand(String command) {
         String osName = System.getProperty("os.name", "");
         boolean windows = osName != null && osName.toLowerCase().contains("win");
@@ -311,16 +306,8 @@ public final class JunitLlmSessionRunner {
             this.writer = writer;
         }
 
-        public void announceStatus(JunitLlmOperation operation) {
-            if (operation == JunitLlmOperation.FIX) {
-                info("Fixing...");
-                return;
-            }
+        public void announceStatus() {
             info("Generating...");
-        }
-
-        public void announceRequiredContextPath(String contextPath) {
-            info("Context file: " + contextPath);
         }
 
         public void announceTestFileDiff(String previousContent, String currentContent) {

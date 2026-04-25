@@ -3,7 +3,6 @@ package com.jaipilot.cli.commands;
 import com.jaipilot.cli.JaipilotEndpointConfig;
 import com.jaipilot.cli.backend.HttpJunitLlmBackendClient;
 import com.jaipilot.cli.backend.JunitLlmBackendClient;
-import com.jaipilot.cli.model.JunitLlmOperation;
 import com.jaipilot.cli.model.JunitLlmSessionRequest;
 import com.jaipilot.cli.model.JunitLlmSessionResult;
 import com.jaipilot.cli.service.JunitLlmSessionRunner;
@@ -11,7 +10,6 @@ import com.jaipilot.cli.service.ProjectFileService;
 import com.jaipilot.cli.util.JaipilotAuthTokenStore;
 import java.io.PrintWriter;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -47,10 +45,6 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
             Path workingDirectory = Path.of("").toAbsolutePath().normalize();
             Path resolvedCutPath = resolveCutPath(workingDirectory);
             Path normalizedProjectRoot = inferProjectRoot(workingDirectory, resolvedCutPath);
-            Path resolvedOutputPath = defaultOutputPath(workingDirectory, normalizedProjectRoot, resolvedCutPath);
-            String initialOutputContent = Files.isRegularFile(resolvedOutputPath)
-                    ? fileService.readFile(resolvedOutputPath)
-                    : "";
 
             JunitLlmBackendClient backendClient = new HttpJunitLlmBackendClient(
                     JaipilotEndpointConfig.resolveBackendUrl(),
@@ -64,16 +58,15 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
             JunitLlmSessionResult result = sessionRunner.run(new JunitLlmSessionRequest(
                     normalizedProjectRoot,
                     resolvedCutPath,
-                    resolvedOutputPath,
-                    operation(),
                     null,
-                    initialTestClassCode(resolvedOutputPath),
+                    null,
+                    "",
                     "",
                     null
             ));
 
             consoleLogger.announceTestFile(result.outputPath());
-            consoleLogger.announceTestFileDiff(initialOutputContent, fileService.readFile(result.outputPath()));
+            consoleLogger.announceTestFileDiff(result.previousOutputContent(), result.currentOutputContent());
             consoleLogger.announceTotalTime(Duration.between(startedAt, Instant.now()));
             return CommandLine.ExitCode.OK;
         } catch (CommandLine.ParameterException exception) {
@@ -85,13 +78,7 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
         }
     }
 
-    protected abstract JunitLlmOperation operation();
-
     protected abstract Path resolveCutPath(Path workingDirectory);
-
-    protected abstract Path defaultOutputPath(Path workingDirectory, Path projectRoot, Path resolvedCutPath);
-
-    protected abstract String initialTestClassCode(Path resolvedOutputPath);
 
     protected final ProjectFileService fileService() {
         return fileService;
@@ -102,6 +89,7 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
         try {
             authToken = firstNonBlank(
                     System.getenv("JAIPILOT_AUTH_TOKEN"),
+                    System.getenv("JAIPILOT_LICENSE_KEY"),
                     JaipilotAuthTokenStore.readBrowserAccessToken(),
                     JaipilotAuthTokenStore.readAuthToken()
             );
@@ -115,7 +103,7 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
         if (authToken == null) {
             throw new CommandLine.ParameterException(
                     spec.commandLine(),
-                    "Set JAIPILOT_AUTH_TOKEN, run 'jaipilot login <token>', or provide browser-login "
+                    "Set JAIPILOT_AUTH_TOKEN or JAIPILOT_LICENSE_KEY, run 'jaipilot login <token>', or provide browser-login "
                             + "credentials at ~/.config/jaipilot/credentials.json."
             );
         }

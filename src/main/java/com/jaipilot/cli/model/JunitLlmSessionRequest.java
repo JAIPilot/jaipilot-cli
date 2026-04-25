@@ -5,9 +5,8 @@ import java.nio.file.Path;
 public record JunitLlmSessionRequest(
         Path projectRoot,
         Path cutPath,
-        Path outputPath,
-        JunitLlmOperation operation,
         String sessionId,
+        String testFilePath,
         String initialTestClassCode,
         String newTestClassCode,
         String clientLogs
