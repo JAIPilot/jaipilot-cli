@@ -31,7 +31,6 @@ class HttpJunitLlmBackendClientTlsTest {
                 null,
                 "CrashController",
                 "src/test/java/com/example/CrashControllerTest.java",
-                "5.11.0",
                 "class body",
                 "",
                 "",

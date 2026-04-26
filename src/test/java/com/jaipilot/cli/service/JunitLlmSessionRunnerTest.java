@@ -41,14 +41,12 @@ class JunitLlmSessionRunnerTest {
                         "session-1",
                         "src/test/java/com/example/CrashControllerTest.java",
                         "",
-                        List.of(),
                         List.of("echo hello-from-backend")
                 ),
                 doneOutput(
                         "session-1",
                         "src/test/java/com/example/CrashControllerTest.java",
                         "package com.example;\n\nclass CrashControllerTest {\n}\n",
-                        List.of(),
                         List.of()
                 )
         );
@@ -73,6 +71,11 @@ class JunitLlmSessionRunnerTest {
         assertEquals("session-1", result.sessionId());
         assertEquals(outputPath, result.outputPath());
         assertEquals(
+                "src/main/java/com/example/CrashController.java",
+                backendClient.requests.get(0).cutName()
+        );
+        assertEquals(null, backendClient.requests.get(0).testFilePath());
+        assertEquals(
                 "package com.example;\n\nclass CrashControllerTest {\n}\n",
                 Files.readString(outputPath)
         );
@@ -81,6 +84,110 @@ class JunitLlmSessionRunnerTest {
         assertTrue(secondRequestLogs.contains("$ echo hello-from-backend"));
         assertTrue(secondRequestLogs.contains("hello-from-backend"));
         assertTrue(secondRequestLogs.contains("[exitCode=0"));
+    }
+
+    @Test
+    void runWritesReturnedTestFileBeforePendingBashCommandsExecute() throws Exception {
+        Path cutPath = write(
+                "src/main/java/com/example/VetController.java",
+                """
+                package com.example;
+
+                public class VetController {
+                }
+                """
+        );
+        Path outputPath = tempDir.resolve("src/test/java/com/example/VetControllerTest.java");
+        String testSource = "package com.example;\n\nclass VetControllerTest {\n}\n";
+
+        StubBackendClient backendClient = new StubBackendClient(
+                doneOutput(
+                        "session-1",
+                        "src/test/java/com/example/VetControllerTest.java",
+                        testSource,
+                        List.of("cat src/test/java/com/example/VetControllerTest.java")
+                ),
+                doneOutput(
+                        "session-1",
+                        "src/test/java/com/example/VetControllerTest.java",
+                        "",
+                        List.of()
+                )
+        );
+
+        JunitLlmSessionRunner runner = new JunitLlmSessionRunner(
+                backendClient,
+                new ProjectFileService(),
+                new JunitLlmSessionRunner.ConsoleLogger(new PrintWriter(new StringWriter(), true))
+        );
+
+        JunitLlmSessionResult result = runner.run(new JunitLlmSessionRequest(
+                tempDir,
+                cutPath,
+                null,
+                null,
+                "",
+                "",
+                null
+        ));
+
+        assertEquals(outputPath, result.outputPath());
+        assertEquals(testSource, Files.readString(outputPath));
+        assertEquals(2, backendClient.requests.size());
+        String secondRequestLogs = backendClient.requests.get(1).clientLogs();
+        assertTrue(secondRequestLogs.contains("$ cat src/test/java/com/example/VetControllerTest.java"));
+        assertTrue(secondRequestLogs.contains("class VetControllerTest {"));
+    }
+
+    @Test
+    void runDoesNotRewritePathWhenResponseOmitsFinalTestFile() throws Exception {
+        Path cutPath = write(
+                "src/main/java/com/example/VetController.java",
+                """
+                package com.example;
+
+                public class VetController {
+                }
+                """
+        );
+        Path primaryOutputPath = tempDir.resolve("src/test/java/com/example/VetControllerTest.java");
+        Path staleOutputPath = tempDir.resolve("src/test/java/com/example/StaleControllerTest.java");
+        String testSource = "package com.example;\n\nclass VetControllerTest {\n}\n";
+
+        StubBackendClient backendClient = new StubBackendClient(
+                doneOutput(
+                        "session-1",
+                        "src/test/java/com/example/VetControllerTest.java",
+                        testSource,
+                        List.of("echo ready")
+                ),
+                doneOutput(
+                        "session-1",
+                        "src/test/java/com/example/StaleControllerTest.java",
+                        "",
+                        List.of()
+                )
+        );
+
+        JunitLlmSessionRunner runner = new JunitLlmSessionRunner(
+                backendClient,
+                new ProjectFileService(),
+                new JunitLlmSessionRunner.ConsoleLogger(new PrintWriter(new StringWriter(), true))
+        );
+
+        JunitLlmSessionResult result = runner.run(new JunitLlmSessionRequest(
+                tempDir,
+                cutPath,
+                null,
+                null,
+                "",
+                "",
+                null
+        ));
+
+        assertEquals(primaryOutputPath, result.outputPath());
+        assertEquals(testSource, Files.readString(primaryOutputPath));
+        assertFalse(Files.exists(staleOutputPath));
     }
 
     @Test
@@ -112,7 +219,6 @@ class JunitLlmSessionRunnerTest {
             String sessionId,
             String finalTestFilePath,
             String finalTestFile,
-            List<String> requiredContextClassPaths,
             List<String> pendingBashCommands
     ) {
         return new FetchJobResponse(
@@ -121,7 +227,6 @@ class JunitLlmSessionRunnerTest {
                         sessionId,
                         finalTestFilePath,
                         finalTestFile,
-                        requiredContextClassPaths,
                         pendingBashCommands
                 ),
                 null,

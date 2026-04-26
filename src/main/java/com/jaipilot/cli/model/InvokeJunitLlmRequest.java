@@ -4,7 +4,6 @@ public record InvokeJunitLlmRequest(
         String sessionId,
         String cutName,
         String testFilePath,
-        String mockitoVersion,
         String cutCode,
         String initialTestClassCode,
         String newTestClassCode,

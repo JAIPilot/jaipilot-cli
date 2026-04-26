@@ -54,7 +54,6 @@ class HttpJunitLlmBackendClientTest {
                 null,
                 "CrashController",
                 "src/test/java/com/example/CrashControllerTest.java",
-                "5.11.0",
                 "class body",
                 "",
                 "",
@@ -69,7 +68,6 @@ class HttpJunitLlmBackendClientTest {
         assertFalse(requestBody.get().contains("\"type\""));
         assertTrue(requestBody.get().contains("\"cutName\":\"CrashController\""));
         assertTrue(requestBody.get().contains("\"testFilePath\":\"src/test/java/com/example/CrashControllerTest.java\""));
-        assertTrue(requestBody.get().contains("\"mockitoVersion\":\"5.11.0\""));
         assertTrue(requestBody.get().contains("\"cutCode\":\"class body\""));
         assertTrue(requestBody.get().contains("\"initialTestClassCode\":\"\""));
         assertTrue(requestBody.get().contains("\"newTestClassCode\":\"\""));
@@ -85,33 +83,6 @@ class HttpJunitLlmBackendClientTest {
         assertFalse(requestBody.get().contains("initial_testclass_code"));
         assertFalse(requestBody.get().contains("context_classes"));
         assertFalse(requestBody.get().contains("new_testclass_code"));
-    }
-
-    @Test
-    void invokeOmitsMockitoVersionWhenAbsent() throws Exception {
-        AtomicReference<String> requestBody = new AtomicReference<>();
-
-        server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.createContext("/functions/v1/invoke-junit-llm-cli", exchange -> {
-            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-            writeJson(exchange, "{\"jobId\":\"job-1\",\"sessionId\":\"session-1\"}");
-        });
-        server.start();
-
-        HttpJunitLlmBackendClient client = new HttpJunitLlmBackendClient(baseUrl(), "token-123");
-
-        client.invoke(new InvokeJunitLlmRequest(
-                null,
-                "CrashController",
-                null,
-                null,
-                "class body",
-                "",
-                "",
-                null
-        ));
-
-        assertFalse(requestBody.get().contains("\"mockitoVersion\""));
     }
 
     @Test
@@ -260,7 +231,6 @@ class HttpJunitLlmBackendClientTest {
                 null,
                 "CrashController",
                 "src/test/java/com/example/CrashControllerTest.java",
-                "5.11.0",
                 "class body",
                 "",
                 "",

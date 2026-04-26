@@ -14,7 +14,9 @@ import java.time.Duration;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public final class JunitLlmSessionRunner {
 
@@ -56,21 +58,21 @@ public final class JunitLlmSessionRunner {
 
     public JunitLlmSessionResult run(JunitLlmSessionRequest sessionRequest) throws Exception {
         String cutCode = fileService.readFile(sessionRequest.cutPath());
-        String cutName = fileService.stripJavaExtension(sessionRequest.cutPath().getFileName().toString());
-        String mockitoVersion = null;
+        String cutName = buildCutPathForBackend(sessionRequest.projectRoot(), sessionRequest.cutPath());
 
         String currentSessionId = blankToNull(sessionRequest.sessionId());
         String currentTestFilePath = blankToNull(sessionRequest.testFilePath());
         String currentTestCode = normalizeNullableText(sessionRequest.newTestClassCode());
         String clientLogs = blankToNull(sessionRequest.clientLogs());
+        Map<Path, String> previousOutputByPath = new HashMap<>();
+        Path latestWrittenOutputPath = null;
 
         for (int interaction = 1; interaction <= MAX_INTERACTIONS; interaction++) {
             consoleLogger.announceStatus();
             InvokeJunitLlmRequest invokeRequest = new InvokeJunitLlmRequest(
                     currentSessionId,
                     cutName,
-                    currentTestFilePath,
-                    mockitoVersion,
+                    null,
                     cutCode,
                     normalizeText(sessionRequest.initialTestClassCode()),
                     normalizeText(currentTestCode),
@@ -84,13 +86,29 @@ public final class JunitLlmSessionRunner {
 
             FetchJobResponse.FetchJobOutput output = requireOutput(fetchJobResponse);
             String nextTestFilePath = blankToNull(output.finalTestFilePath());
-            if (nextTestFilePath != null) {
+            boolean hasFinalTestFile = output.finalTestFile() != null && !output.finalTestFile().isBlank();
+            if (
+                    nextTestFilePath != null &&
+                            (hasFinalTestFile || currentTestFilePath == null || currentTestFilePath.isBlank())
+            ) {
                 currentTestFilePath = nextTestFilePath;
             }
 
-            boolean hasFinalTestFile = output.finalTestFile() != null && !output.finalTestFile().isBlank();
+            Path outputPathForInteraction = null;
             if (hasFinalTestFile) {
                 currentTestCode = output.finalTestFile();
+                if (
+                        currentTestFilePath != null && !currentTestFilePath.isBlank() &&
+                                currentTestCode != null && !currentTestCode.isBlank()
+                ) {
+                    outputPathForInteraction = writeCurrentTestFile(
+                            sessionRequest.projectRoot(),
+                            currentTestFilePath,
+                            currentTestCode,
+                            previousOutputByPath
+                    );
+                    latestWrittenOutputPath = outputPathForInteraction;
+                }
             }
 
             List<String> pendingBashCommands = normalizeList(output.pendingBashCommands());
@@ -108,15 +126,23 @@ public final class JunitLlmSessionRunner {
                 throw new IllegalStateException("Backend did not return a test file path.");
             }
 
-            Path outputPath = resolveOutputPath(sessionRequest.projectRoot(), currentTestFilePath);
-            String previousOutputContent = Files.isRegularFile(outputPath)
-                    ? fileService.readFile(outputPath)
-                    : "";
-            fileService.writeFile(outputPath, currentTestCode);
+            Path outputPath = outputPathForInteraction;
+            if (outputPath == null) {
+                outputPath = latestWrittenOutputPath;
+            }
+            if (outputPath == null) {
+                outputPath = writeCurrentTestFile(
+                        sessionRequest.projectRoot(),
+                        currentTestFilePath,
+                        currentTestCode,
+                        previousOutputByPath
+                );
+                latestWrittenOutputPath = outputPath;
+            }
             return new JunitLlmSessionResult(
                     currentSessionId,
                     outputPath,
-                    previousOutputContent,
+                    previousOutputByPath.getOrDefault(outputPath, ""),
                     currentTestCode
             );
         }
@@ -175,6 +201,35 @@ public final class JunitLlmSessionRunner {
             throw new IllegalStateException("Backend test file path escapes the project root: " + backendOutputPath);
         }
         return resolvedPath;
+    }
+
+    private Path writeCurrentTestFile(
+            Path projectRoot,
+            String backendOutputPath,
+            String testCode,
+            Map<Path, String> previousOutputByPath
+    ) throws Exception {
+        Path outputPath = resolveOutputPath(projectRoot, backendOutputPath);
+        if (!previousOutputByPath.containsKey(outputPath)) {
+            String previousContent = Files.isRegularFile(outputPath)
+                    ? fileService.readFile(outputPath)
+                    : "";
+            previousOutputByPath.put(outputPath, previousContent);
+        }
+        fileService.writeFile(outputPath, testCode);
+        return outputPath;
+    }
+
+    private String buildCutPathForBackend(Path projectRoot, Path cutPath) {
+        Path normalizedProjectRoot = projectRoot.toAbsolutePath().normalize();
+        Path normalizedCutPath = cutPath.toAbsolutePath().normalize();
+        if (normalizedCutPath.startsWith(normalizedProjectRoot)) {
+            return normalizedProjectRoot
+                    .relativize(normalizedCutPath)
+                    .toString()
+                    .replace('\\', '/');
+        }
+        return normalizedCutPath.getFileName().toString();
     }
 
     private String mergeSessionId(String currentSessionId, FetchJobResponse response) {

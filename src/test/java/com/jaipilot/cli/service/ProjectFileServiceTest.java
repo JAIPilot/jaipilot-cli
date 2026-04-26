@@ -2,11 +2,9 @@ package com.jaipilot.cli.service;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProjectFileServiceTest {
 
@@ -16,29 +14,23 @@ class ProjectFileServiceTest {
     Path tempDir;
 
     @Test
-    void deriveGeneratedTestPathRewritesStandardMavenSourceRoots() {
-        Path projectRoot = Path.of("/tmp/project");
-        Path cutPath = projectRoot.resolve("src/main/java/com/example/CrashController.java");
-
-        Path outputPath = projectFileService.deriveGeneratedTestPath(projectRoot, cutPath);
+    void resolvePathResolvesRelativePathsAgainstProjectRoot() {
+        Path projectRoot = tempDir.resolve("workspace");
+        Path resolved = projectFileService.resolvePath(projectRoot, Path.of("src/main/java/com/example/Cut.java"));
 
         assertEquals(
-                projectRoot.resolve("src/test/java/com/example/CrashControllerTest.java"),
-                outputPath
+                projectRoot.resolve("src/main/java/com/example/Cut.java").normalize(),
+                resolved
         );
     }
 
     @Test
-    void deriveGeneratedTestPathPreservesModulePrefix() {
-        Path projectRoot = Path.of("/tmp/project");
-        Path cutPath = projectRoot.resolve("module-a/src/main/java/com/example/CrashController.java");
+    void resolvePathReturnsNormalizedAbsolutePath() {
+        Path absolute = tempDir.resolve("workspace").resolve("src/main/java/../java/com/example/Cut.java");
 
-        Path outputPath = projectFileService.deriveGeneratedTestPath(projectRoot, cutPath);
+        Path resolved = projectFileService.resolvePath(tempDir, absolute);
 
-        assertEquals(
-                projectRoot.resolve("module-a/src/test/java/com/example/CrashControllerTest.java"),
-                outputPath
-        );
+        assertEquals(absolute.normalize(), resolved);
     }
 
     @Test
@@ -54,45 +46,9 @@ class ProjectFileServiceTest {
     }
 
     @Test
-    void readContextEntriesFormatsPathAndSource() throws Exception {
-        Path projectRoot = tempDir.resolve("petclinic");
-        writeSource(
-                projectRoot,
-                "src/main/java/com/example/support/Helper.java",
-                """
-                package com.example.support;
-
-                public class Helper {
-                }
-                """
-        );
-
-        assertEquals(
-                List.of(
-                        "com/example/support/Helper.java =\npackage com.example.support;\n\npublic class Helper {\n}\n"
-                ),
-                projectFileService.readContextEntries(projectRoot, List.of("com/example/support/Helper.java"))
-        );
-    }
-
-    @Test
-    void inferCutPathFromTestPathRewritesConventionalTestNames() throws Exception {
-        Path projectRoot = tempDir.resolve("workspace");
-        writeSource(
-                projectRoot,
-                "src/main/java/com/example/CrashController.java",
-                "package com.example;\nclass CrashController {}\n"
-        );
-        Path testPath = writeSource(
-                projectRoot,
-                "src/test/java/com/example/CrashControllerTest.java",
-                "package com.example;\nclass CrashControllerTest {}\n"
-        );
-
-        assertEquals(
-                projectRoot.resolve("src/main/java/com/example/CrashController.java"),
-                projectFileService.inferCutPathFromTestPath(projectRoot, testPath)
-        );
+    void stripJavaExtensionRemovesSuffixWhenPresent() {
+        assertEquals("CrashController", projectFileService.stripJavaExtension("CrashController.java"));
+        assertEquals("CrashController", projectFileService.stripJavaExtension("CrashController"));
     }
 
     @Test
@@ -103,12 +59,5 @@ class ProjectFileServiceTest {
         projectFileService.writeFile(javaFile, source);
 
         assertEquals(source, Files.readString(javaFile));
-    }
-
-    private Path writeSource(Path projectRoot, String relativePath, String content) throws Exception {
-        Path path = projectRoot.resolve(relativePath);
-        Files.createDirectories(path.getParent());
-        Files.writeString(path, content);
-        return path;
     }
 }
