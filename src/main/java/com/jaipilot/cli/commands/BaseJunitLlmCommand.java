@@ -13,6 +13,9 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 import picocli.CommandLine.Model.CommandSpec;
@@ -46,9 +49,11 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
             Path resolvedCutPath = resolveCutPath(workingDirectory);
             Path normalizedProjectRoot = inferProjectRoot(workingDirectory, resolvedCutPath);
 
+            String initialAuthToken = resolveAuthToken();
             JunitLlmBackendClient backendClient = new HttpJunitLlmBackendClient(
                     JaipilotEndpointConfig.resolveBackendUrl(),
-                    resolveAuthToken()
+                    initialAuthToken,
+                    this::resolveAuthTokenCandidates
             );
             JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
                     backendClient,
@@ -108,6 +113,31 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
             );
         }
         return authToken;
+    }
+
+    private List<String> resolveAuthTokenCandidates(String currentToken) {
+        LinkedHashSet<String> candidates = new LinkedHashSet<>();
+        addCandidate(candidates, currentToken);
+        addCandidate(candidates, System.getenv("JAIPILOT_AUTH_TOKEN"));
+        addCandidate(candidates, System.getenv("JAIPILOT_LICENSE_KEY"));
+        try {
+            addCandidate(candidates, JaipilotAuthTokenStore.readBrowserAccessToken());
+            addCandidate(candidates, JaipilotAuthTokenStore.readAuthToken());
+        } catch (IOException ignored) {
+            // Ignore read failures and keep existing candidate set.
+        }
+        return new ArrayList<>(candidates);
+    }
+
+    private static void addCandidate(LinkedHashSet<String> candidates, String candidate) {
+        if (candidate == null) {
+            return;
+        }
+        String trimmed = candidate.trim();
+        if (trimmed.isEmpty()) {
+            return;
+        }
+        candidates.add(trimmed);
     }
 
     private Path inferProjectRoot(Path workingDirectory, Path resolvedCutPath) {

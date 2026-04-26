@@ -199,6 +199,40 @@ class HttpJunitLlmBackendClientTest {
         assertEquals(11, requestCount.get());
     }
 
+    @Test
+    void invokeRetriesWithNewTokenAfterUnauthorized() throws Exception {
+        AtomicInteger requestCount = new AtomicInteger();
+        AtomicReference<String> firstAuthorization = new AtomicReference<>();
+        AtomicReference<String> secondAuthorization = new AtomicReference<>();
+
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/functions/v1/invoke-junit-llm-cli", exchange -> {
+            int current = requestCount.incrementAndGet();
+            String auth = exchange.getRequestHeaders().getFirst("Authorization");
+            if (current == 1) {
+                firstAuthorization.set(auth);
+                writeJson(exchange, 401, "{\"error\":\"jwt expired\"}");
+                return;
+            }
+            secondAuthorization.set(auth);
+            writeJson(exchange, "{\"jobId\":\"job-1\",\"sessionId\":\"session-1\"}");
+        });
+        server.start();
+
+        HttpJunitLlmBackendClient client = new HttpJunitLlmBackendClient(
+                baseUrl(),
+                "expired-token",
+                currentToken -> List.of("expired-token", "fresh-token")
+        );
+
+        InvokeJunitLlmResponse response = client.invoke(sampleRequest());
+
+        assertEquals(2, requestCount.get());
+        assertEquals("Bearer expired-token", firstAuthorization.get());
+        assertEquals("Bearer fresh-token", secondAuthorization.get());
+        assertEquals("job-1", response.jobId());
+    }
+
     private String baseUrl() {
         return "http://127.0.0.1:" + server.getAddress().getPort();
     }

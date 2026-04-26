@@ -13,6 +13,9 @@ import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -28,6 +31,11 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
     private static final Set<Integer> RETRIABLE_HTTP_STATUS_CODES = Set.of(408, 425, 429);
     private static final Set<Integer> RETRIABLE_CURL_EXIT_CODES = Set.of(5, 6, 7, 18, 28, 52, 55, 56, 92);
 
+    @FunctionalInterface
+    public interface AuthTokenResolver {
+        List<String> resolveTokenCandidates(String currentToken);
+    }
+
     interface SleepStrategy {
         void sleep(long millis) throws InterruptedException;
     }
@@ -35,16 +43,26 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
     private final CurlHttpClient curlHttpClient;
     private final ObjectMapper objectMapper;
     private final String backendUrl;
-    private final String authToken;
+    private volatile String authToken;
+    private final AuthTokenResolver authTokenResolver;
     private final SleepStrategy sleepStrategy;
 
     public HttpJunitLlmBackendClient(String backendUrl, String authToken) {
+        this(backendUrl, authToken, currentToken -> List.of(currentToken));
+    }
+
+    public HttpJunitLlmBackendClient(
+            String backendUrl,
+            String authToken,
+            AuthTokenResolver authTokenResolver
+    ) {
         this(
                 new CurlHttpClient(),
                 OBJECT_MAPPER,
                 backendUrl,
                 authToken,
-                Thread::sleep
+                Thread::sleep,
+                authTokenResolver
         );
     }
 
@@ -54,6 +72,24 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
             String backendUrl,
             String authToken,
             SleepStrategy sleepStrategy
+    ) {
+        this(
+                curlHttpClient,
+                objectMapper,
+                backendUrl,
+                authToken,
+                sleepStrategy,
+                currentToken -> List.of(currentToken)
+        );
+    }
+
+    HttpJunitLlmBackendClient(
+            CurlHttpClient curlHttpClient,
+            ObjectMapper objectMapper,
+            String backendUrl,
+            String authToken,
+            SleepStrategy sleepStrategy,
+            AuthTokenResolver authTokenResolver
     ) {
         if (backendUrl == null || backendUrl.isBlank()) {
             throw new IllegalArgumentException("backendUrl is required");
@@ -65,6 +101,7 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.backendUrl = trimTrailingSlash(backendUrl);
         this.authToken = authToken.trim();
+        this.authTokenResolver = Objects.requireNonNull(authTokenResolver, "authTokenResolver");
         this.sleepStrategy = Objects.requireNonNull(sleepStrategy, "sleepStrategy");
     }
 
@@ -80,7 +117,6 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
                     "POST",
                     Map.of(
                             "Accept", "application/json",
-                            "Authorization", "Bearer " + authToken,
                             "Content-Type", "application/json"
                     ),
                     body,
@@ -105,10 +141,7 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
             response = requestWithRetries(
                     uri,
                     "GET",
-                    Map.of(
-                            "Accept", "application/json",
-                            "Authorization", "Bearer " + authToken
-                    ),
+                    Map.of("Accept", "application/json"),
                     null,
                     Duration.ofSeconds(30)
             );
@@ -125,14 +158,23 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
     private CurlHttpClient.CurlResponse requestWithRetries(
             URI uri,
             String method,
-            Map<String, String> headers,
+            Map<String, String> baseHeaders,
             String requestBody,
             Duration timeout
     ) throws IOException, InterruptedException {
+        LinkedHashSet<String> attemptedTokens = new LinkedHashSet<>();
+        String tokenInUse = authToken;
+
         for (int retry = 0; retry <= MAX_RETRIES; retry++) {
             CurlHttpClient.CurlResponse response;
             try {
-                response = curlHttpClient.request(method, uri, headers, requestBody, timeout);
+                response = curlHttpClient.request(
+                        method,
+                        uri,
+                        addAuthorizationHeader(baseHeaders, tokenInUse),
+                        requestBody,
+                        timeout
+                );
             } catch (IOException exception) {
                 if (!isRetriable(exception) || retry == MAX_RETRIES) {
                     throw exception;
@@ -142,7 +184,17 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
             }
 
             if (response.statusCode() / 100 == 2) {
+                authToken = tokenInUse;
                 return response;
+            }
+            if (isUnauthorizedStatusCode(response.statusCode())) {
+                attemptedTokens.add(tokenInUse);
+                String replacementToken = nextCandidateToken(tokenInUse, attemptedTokens);
+                if (replacementToken != null) {
+                    tokenInUse = replacementToken;
+                    continue;
+                }
+                throw new IllegalStateException(extractUnauthorizedMessage(response.body()));
             }
             if (isRetriableStatusCode(response.statusCode()) && retry < MAX_RETRIES) {
                 sleepBeforeRetry(retry + 1);
@@ -152,6 +204,51 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
         }
 
         throw new IllegalStateException("Backend request failed after retries.");
+    }
+
+    private static Map<String, String> addAuthorizationHeader(
+            Map<String, String> baseHeaders,
+            String token
+    ) {
+        HashMap<String, String> headers = new HashMap<>(baseHeaders);
+        if (token != null && !token.isBlank()) {
+            headers.put("Authorization", "Bearer " + token);
+        }
+        return headers;
+    }
+
+    private String nextCandidateToken(
+            String currentToken,
+            Set<String> attemptedTokens
+    ) {
+        List<String> resolvedCandidates = authTokenResolver.resolveTokenCandidates(currentToken);
+        if (resolvedCandidates == null || resolvedCandidates.isEmpty()) {
+            return null;
+        }
+        for (String candidate : resolvedCandidates) {
+            if (candidate == null || candidate.isBlank()) {
+                continue;
+            }
+            String trimmedCandidate = candidate.trim();
+            if (attemptedTokens.contains(trimmedCandidate)) {
+                continue;
+            }
+            return trimmedCandidate;
+        }
+        return null;
+    }
+
+    private boolean isUnauthorizedStatusCode(int statusCode) {
+        return statusCode == 401 || statusCode == 403;
+    }
+
+    private String extractUnauthorizedMessage(String body) {
+        String backendError = extractErrorMessage(body);
+        if (backendError == null || backendError.isBlank() || "Backend request failed.".equals(backendError)) {
+            return "Unauthorized while calling JAIPilot backend. Auth token may be expired. Re-run `jaipilot login <token>` "
+                    + "or refresh JAIPILOT_AUTH_TOKEN / JAIPILOT_LICENSE_KEY.";
+        }
+        return "Unauthorized while calling JAIPilot backend: " + backendError;
     }
 
     private void sleepBeforeRetry(int retryAttempt) throws InterruptedException {
