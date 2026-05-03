@@ -5,6 +5,7 @@ import com.jaipilot.cli.backend.HttpJunitLlmBackendClient;
 import com.jaipilot.cli.backend.JunitLlmBackendClient;
 import com.jaipilot.cli.model.JunitLlmSessionRequest;
 import com.jaipilot.cli.model.JunitLlmSessionResult;
+import com.jaipilot.cli.service.CoverageService;
 import com.jaipilot.cli.service.JunitLlmSessionRunner;
 import com.jaipilot.cli.service.ProjectFileService;
 import com.jaipilot.cli.util.JaipilotAuthTokenStore;
@@ -27,13 +28,19 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
     private CommandSpec spec;
 
     private final ProjectFileService fileService;
+    private final CoverageService coverageService;
 
     BaseJunitLlmCommand() {
-        this(new ProjectFileService());
+        this(new ProjectFileService(), new CoverageService());
     }
 
     BaseJunitLlmCommand(ProjectFileService fileService) {
+        this(fileService, new CoverageService());
+    }
+
+    BaseJunitLlmCommand(ProjectFileService fileService, CoverageService coverageService) {
         this.fileService = fileService;
+        this.coverageService = coverageService;
     }
 
     @Override
@@ -48,6 +55,14 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
             Path workingDirectory = Path.of("").toAbsolutePath().normalize();
             Path resolvedCutPath = resolveCutPath(workingDirectory);
             Path normalizedProjectRoot = inferProjectRoot(workingDirectory, resolvedCutPath);
+            String cutPathForDisplay = buildCutPathForDisplay(normalizedProjectRoot, resolvedCutPath);
+
+            CoverageService.CoverageMeasurement beforeCoverage = coverageService.measureLineCoverage(
+                    normalizedProjectRoot,
+                    resolvedCutPath,
+                    out
+            );
+            consoleLogger.announceCoverage("before", cutPathForDisplay, beforeCoverage);
 
             String initialAuthToken = resolveAuthToken();
             JunitLlmBackendClient backendClient = new HttpJunitLlmBackendClient(
@@ -72,6 +87,13 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
 
             consoleLogger.announceTestFile(result.outputPath());
             consoleLogger.announceTestFileDiff(result.previousOutputContent(), result.currentOutputContent());
+            CoverageService.CoverageMeasurement afterCoverage = coverageService.measureLineCoverage(
+                    normalizedProjectRoot,
+                    resolvedCutPath,
+                    out
+            );
+            consoleLogger.announceCoverage("after", cutPathForDisplay, afterCoverage);
+            consoleLogger.announceCoverageSummary(cutPathForDisplay, beforeCoverage, afterCoverage);
             consoleLogger.announceTotalTime(Duration.between(startedAt, Instant.now()));
             return CommandLine.ExitCode.OK;
         } catch (CommandLine.ParameterException exception) {
@@ -146,6 +168,15 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
             inferredProjectRoot = fileService.findNearestBuildProjectRoot(workingDirectory);
         }
         return inferredProjectRoot != null ? inferredProjectRoot : workingDirectory;
+    }
+
+    private String buildCutPathForDisplay(Path projectRoot, Path cutPath) {
+        Path normalizedProjectRoot = projectRoot.toAbsolutePath().normalize();
+        Path normalizedCutPath = cutPath.toAbsolutePath().normalize();
+        if (normalizedCutPath.startsWith(normalizedProjectRoot)) {
+            return normalizedProjectRoot.relativize(normalizedCutPath).toString().replace('\\', '/');
+        }
+        return normalizedCutPath.toString().replace('\\', '/');
     }
 
     private static String firstNonBlank(String... values) {
