@@ -21,7 +21,7 @@ import java.util.Map;
 public final class JunitLlmSessionRunner {
 
     private static final int MAX_INTERACTIONS = 100;
-    private static final int MAX_FETCH_ATTEMPTS = 1000;
+    private static final int MAX_FETCH_ATTEMPTS = 100;
     private static final long FETCH_DELAY_MILLIS = 1_000L;
     private static final Duration BASH_COMMAND_TIMEOUT = Duration.ofMinutes(10);
     private static final PrintWriter QUIET_WRITER = new PrintWriter(Writer.nullWriter());
