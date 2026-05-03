@@ -29,7 +29,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <revision>0.3.32</revision>
+        <revision>0.3.33</revision>
         <maven.compiler.release>17</maven.compiler.release>
         <picocli.version>4.7.7</picocli.version>
         <bouncycastle.version>1.78.1</bouncycastle.version>

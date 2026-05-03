@@ -21,7 +21,7 @@ import java.util.Map;
 public final class JunitLlmSessionRunner {
 
     private static final int MAX_INTERACTIONS = 100;
-    private static final int MAX_FETCH_ATTEMPTS = 120;
+    private static final int MAX_FETCH_ATTEMPTS = 1000;
     private static final long FETCH_DELAY_MILLIS = 1_000L;
     private static final Duration BASH_COMMAND_TIMEOUT = Duration.ofMinutes(10);
     private static final PrintWriter QUIET_WRITER = new PrintWriter(Writer.nullWriter());
@@ -154,9 +154,11 @@ public final class JunitLlmSessionRunner {
         if (jobId == null || jobId.isBlank()) {
             throw new IllegalStateException("Backend did not return a job.");
         }
+        String lastStatus = "";
         for (int attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt++) {
             FetchJobResponse response = backendClient.fetchJob(jobId);
             String status = normalizeStatus(response.status());
+            lastStatus = status;
 
             if (isDone(status)) {
                 return response;
@@ -169,7 +171,12 @@ public final class JunitLlmSessionRunner {
             }
             Thread.sleep(FETCH_DELAY_MILLIS);
         }
-        throw new IllegalStateException("Timed out while waiting for backend response.");
+        long timeoutSeconds = (MAX_FETCH_ATTEMPTS * FETCH_DELAY_MILLIS) / 1_000L;
+        String normalizedStatus = lastStatus == null || lastStatus.isBlank() ? "unknown" : lastStatus;
+        throw new IllegalStateException(
+                "Timed out while waiting for backend response for job `" + jobId + "` after "
+                        + timeoutSeconds + "s (last status: " + normalizedStatus + ")."
+        );
     }
 
     private FetchJobResponse.FetchJobOutput requireOutput(FetchJobResponse response) {
