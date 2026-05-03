@@ -146,47 +146,15 @@ runs:
 
         processed=0
         failed=0
-        declare -A coverage_by_class=()
 
         for class_path in "${java_files[@]}"; do
           processed=$((processed + 1))
           echo "[$processed/${#java_files[@]}] jaipilot generate $class_path"
-          class_log_file="$(mktemp)"
-          if jaipilot generate "$class_path" 2>&1 | tee "$class_log_file"; then
-            summary_line="$(grep 'JAIPILOT_COVERAGE_SUMMARY|' "$class_log_file" | tail -n 1 || true)"
-            if [ -n "$summary_line" ]; then
-              summary_payload="${summary_line#*JAIPILOT_COVERAGE_SUMMARY|}"
-              summary_class="${summary_payload%%|*}"
-              if [ -n "$summary_class" ]; then
-                coverage_by_class["$summary_class"]="$summary_payload"
-              fi
-            fi
-          else
-            summary_line="$(grep 'JAIPILOT_COVERAGE_SUMMARY|' "$class_log_file" | tail -n 1 || true)"
-            if [ -n "$summary_line" ]; then
-              summary_payload="${summary_line#*JAIPILOT_COVERAGE_SUMMARY|}"
-              summary_class="${summary_payload%%|*}"
-              if [ -n "$summary_class" ]; then
-                coverage_by_class["$summary_class"]="$summary_payload"
-              fi
-            fi
+          if ! jaipilot generate "$class_path"; then
             failed=$((failed + 1))
             echo "Generation failed for: $class_path" >&2
           fi
-          rm -f "$class_log_file"
         done
-
-        if [ "${#coverage_by_class[@]}" -gt 0 ]; then
-          echo "Coverage summary for generated classes in this PR:"
-          for class_path in "${java_files[@]}"; do
-            summary_payload="${coverage_by_class[$class_path]-}"
-            if [ -z "$summary_payload" ]; then
-              continue
-            fi
-            IFS='|' read -r summary_class summary_before summary_after summary_delta <<< "$summary_payload"
-            echo " - ${summary_class}: before=${summary_before}, after=${summary_after}, delta=${summary_delta}"
-          done
-        fi
 
         mapfile -d '' -t classpath_artifacts < <(find . -type f -name '.classpath.txt' -print0)
         if [ "${#classpath_artifacts[@]}" -gt 0 ]; then

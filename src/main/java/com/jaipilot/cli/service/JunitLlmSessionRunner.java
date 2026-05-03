@@ -396,48 +396,6 @@ public final class JunitLlmSessionRunner {
             info("Total time: " + formatDuration(duration));
         }
 
-        public void announceCoverage(
-                String phase,
-                String cutPath,
-                CoverageService.CoverageMeasurement coverage
-        ) {
-            if (coverage == null) {
-                info("Coverage (" + phase + "): " + cutPath + " line=N/A");
-                return;
-            }
-            if (coverage.available()) {
-                info(
-                        "Coverage (" + phase + "): " + cutPath
-                                + " line=" + coverage.formattedPercent()
-                                + " (" + coverage.coveredLines() + "/" + coverage.totalLines() + " lines)"
-                );
-                return;
-            }
-            info(
-                    "Coverage (" + phase + "): " + cutPath
-                            + " line=N/A"
-                            + " (" + coverage.reason() + ")"
-            );
-        }
-
-        public void announceCoverageSummary(
-                String cutPath,
-                CoverageService.CoverageMeasurement beforeCoverage,
-                CoverageService.CoverageMeasurement afterCoverage
-        ) {
-            String beforeDisplay = beforeCoverage == null ? "N/A" : beforeCoverage.formattedPercentOrNa();
-            String afterDisplay = afterCoverage == null ? "N/A" : afterCoverage.formattedPercentOrNa();
-            String deltaDisplay = formatCoverageDelta(beforeCoverage, afterCoverage);
-
-            info(
-                    "Coverage summary: " + cutPath
-                            + " before=" + beforeDisplay
-                            + ", after=" + afterDisplay
-                            + ", delta=" + deltaDisplay
-            );
-            raw("JAIPILOT_COVERAGE_SUMMARY|" + cutPath + "|" + beforeDisplay + "|" + afterDisplay + "|" + deltaDisplay);
-        }
-
         public void error(String message) {
             info("ERROR: " + message);
         }
@@ -461,22 +419,6 @@ public final class JunitLlmSessionRunner {
 
         private String colorize(String color, String message) {
             return color + message + ANSI_RESET;
-        }
-
-        private String formatCoverageDelta(
-                CoverageService.CoverageMeasurement beforeCoverage,
-                CoverageService.CoverageMeasurement afterCoverage
-        ) {
-            if (
-                    beforeCoverage == null
-                            || afterCoverage == null
-                            || !beforeCoverage.available()
-                            || !afterCoverage.available()
-            ) {
-                return "N/A";
-            }
-            double delta = afterCoverage.linePercent() - beforeCoverage.linePercent();
-            return String.format("%+.2f%%", delta);
         }
 
         private List<DiffLine> buildDiffLines(String previousContent, String currentContent) {
