@@ -181,10 +181,7 @@ class JunitLlmSessionRunnerTest {
         ));
 
         String logs = output.toString();
-        assertTrue(logs.contains("Coverage summary:"));
-        assertTrue(logs.contains("Before: 62.5%"));
-        assertTrue(logs.contains("After: 71.25%"));
-        assertTrue(logs.contains("Delta: +8.75"));
+        assertFalse(logs.contains("Coverage summary:"));
     }
 
     @Test
@@ -240,10 +237,7 @@ class JunitLlmSessionRunnerTest {
         ));
 
         String logs = output.toString();
-        assertTrue(logs.contains("Coverage summary:"));
-        assertTrue(logs.contains("Before: 49.00% (line coverage)"));
-        assertTrue(logs.contains("After: 49.00% (line coverage)"));
-        assertTrue(logs.contains("Delta: 0.00 pp"));
+        assertFalse(logs.contains("Coverage summary:"));
         assertFalse(logs.contains("Before command:"));
         assertFalse(logs.contains("After command:"));
         assertFalse(logs.contains("<?xml version=\"1.0\""));
@@ -296,10 +290,7 @@ class JunitLlmSessionRunnerTest {
         ));
 
         String logs = output.toString();
-        assertTrue(logs.contains("Coverage summary:"));
-        assertTrue(logs.contains("Before: 49.00%"));
-        assertTrue(logs.contains("After: 57.25%"));
-        assertTrue(logs.contains("Delta: +8.25 pp"));
+        assertFalse(logs.contains("Coverage summary:"));
     }
 
     @Test

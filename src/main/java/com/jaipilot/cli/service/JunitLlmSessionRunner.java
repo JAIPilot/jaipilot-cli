@@ -89,7 +89,8 @@ public final class JunitLlmSessionRunner {
             FetchJobResponse.FetchJobOutput output = requireOutput(fetchJobResponse);
             String coverageSummaryText = normalizeCoverageSummaryText(output.coverageSummary());
             if (coverageSummaryText != null && !coverageSummaryText.equals(lastCoverageSummaryText)) {
-                consoleLogger.announceCoverageSummary(coverageSummaryText);
+                // Temporarily disabled coverage summary printing.
+                // consoleLogger.announceCoverageSummary(coverageSummaryText);
                 lastCoverageSummaryText = coverageSummaryText;
             }
             String nextTestFilePath = blankToNull(output.finalTestFilePath());
