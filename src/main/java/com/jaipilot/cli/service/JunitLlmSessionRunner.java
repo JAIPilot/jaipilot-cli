@@ -64,6 +64,7 @@ public final class JunitLlmSessionRunner {
         String currentTestFilePath = blankToNull(sessionRequest.testFilePath());
         String currentTestCode = normalizeNullableText(sessionRequest.newTestClassCode());
         String clientLogs = blankToNull(sessionRequest.clientLogs());
+        String lastCoverageSummaryText = null;
         Map<Path, String> previousOutputByPath = new HashMap<>();
         Path latestWrittenOutputPath = null;
 
@@ -85,6 +86,11 @@ public final class JunitLlmSessionRunner {
             currentSessionId = mergeSessionId(currentSessionId, fetchJobResponse);
 
             FetchJobResponse.FetchJobOutput output = requireOutput(fetchJobResponse);
+            String coverageSummaryText = normalizeCoverageSummaryText(output.coverageSummary());
+            if (coverageSummaryText != null && !coverageSummaryText.equals(lastCoverageSummaryText)) {
+                consoleLogger.announceCoverageSummary(coverageSummaryText);
+                lastCoverageSummaryText = coverageSummaryText;
+            }
             String nextTestFilePath = blankToNull(output.finalTestFilePath());
             boolean hasFinalTestFile = output.finalTestFile() != null && !output.finalTestFile().isBlank();
             if (
@@ -286,6 +292,13 @@ public final class JunitLlmSessionRunner {
         return null;
     }
 
+    private String normalizeCoverageSummaryText(FetchJobResponse.CoverageSummary coverageSummary) {
+        if (coverageSummary == null) {
+            return null;
+        }
+        return blankToNull(coverageSummary.text());
+    }
+
     private List<String> normalizeList(List<String> values) {
         if (values == null || values.isEmpty()) {
             return List.of();
@@ -394,6 +407,22 @@ public final class JunitLlmSessionRunner {
 
         public void announceTotalTime(Duration duration) {
             info("Total time: " + formatDuration(duration));
+        }
+
+        public void announceCoverageSummary(String coverageSummaryText) {
+            if (coverageSummaryText == null || coverageSummaryText.isBlank()) {
+                return;
+            }
+
+            info("Coverage summary:");
+            String normalizedText = coverageSummaryText
+                    .replace("\r\n", "\n")
+                    .replace('\r', '\n');
+            for (String line : normalizedText.split("\n", -1)) {
+                if (!line.isBlank()) {
+                    info("  " + line);
+                }
+            }
         }
 
         public void error(String message) {

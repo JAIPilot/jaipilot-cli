@@ -62,6 +62,7 @@ JAIPilot generates high-quality tests for changed Java production classes in pul
 - Detects changed files from PR base branch (or previous commit for push events).
 - Filters to non-test `.java` production classes only.
 - Generates tests for each changed class.
+- Prints backend-provided coverage summaries in `jaipilot generate` logs when available.
 - Commits and pushes generated tests to the same branch.
 - Optionally fails the job when generation errors occur.
 

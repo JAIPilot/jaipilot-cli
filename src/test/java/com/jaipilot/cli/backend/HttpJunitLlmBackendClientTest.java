@@ -17,6 +17,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -95,7 +96,7 @@ class HttpJunitLlmBackendClientTest {
             writeJson(
                     exchange,
                     """
-                    {"status":"done","output":{"sessionId":"session-1","finalTestFilePath":"src/test/java/com/example/CrashControllerTest.java","finalTestFile":"class body","pendingBashCommands":["mvn test"]}}
+                    {"status":"done","output":{"sessionId":"session-1","finalTestFilePath":"src/test/java/com/example/CrashControllerTest.java","finalTestFile":"class body","pendingBashCommands":["mvn test"],"coverageSummary":{"before":{"command":"mvn -q test","primaryPercent":62.5,"primaryMetric":"LINE","metricLines":["LINE 62.5%"]},"after":{"command":"mvn -q test","primaryPercent":71.25,"primaryMetric":"LINE","metricLines":["LINE 71.25%"]},"deltaPercentagePoints":8.75,"snapshotCount":2,"text":"Before: 62.5%\\nAfter: 71.25%\\nDelta: +8.75"}}}
                     """
             );
         });
@@ -111,6 +112,9 @@ class HttpJunitLlmBackendClientTest {
         assertEquals("src/test/java/com/example/CrashControllerTest.java", response.output().finalTestFilePath());
         assertEquals("class body", response.output().finalTestFile());
         assertEquals(List.of("mvn test"), response.output().pendingBashCommands());
+        assertNotNull(response.output().coverageSummary());
+        assertEquals("Before: 62.5%\nAfter: 71.25%\nDelta: +8.75", response.output().coverageSummary().text());
+        assertEquals(8.75d, response.output().coverageSummary().deltaPercentagePoints());
     }
 
     @Test

@@ -140,6 +140,54 @@ class JunitLlmSessionRunnerTest {
     }
 
     @Test
+    void runAnnouncesCoverageSummaryFromBackend() throws Exception {
+        Path cutPath = write(
+                "src/main/java/com/example/OrderController.java",
+                """
+                package com.example;
+
+                public class OrderController {
+                }
+                """
+        );
+        String testSource = "package com.example;\n\nclass OrderControllerTest {\n}\n";
+        String coverageSummary = "Before: 62.5%\nAfter: 71.25%\nDelta: +8.75";
+        StringWriter output = new StringWriter();
+
+        StubBackendClient backendClient = new StubBackendClient(
+                doneOutput(
+                        "session-1",
+                        "src/test/java/com/example/OrderControllerTest.java",
+                        testSource,
+                        List.of(),
+                        coverageSummary
+                )
+        );
+
+        JunitLlmSessionRunner runner = new JunitLlmSessionRunner(
+                backendClient,
+                new ProjectFileService(),
+                new JunitLlmSessionRunner.ConsoleLogger(new PrintWriter(output, true))
+        );
+
+        runner.run(new JunitLlmSessionRequest(
+                tempDir,
+                cutPath,
+                null,
+                null,
+                "",
+                "",
+                null
+        ));
+
+        String logs = output.toString();
+        assertTrue(logs.contains("Coverage summary:"));
+        assertTrue(logs.contains("Before: 62.5%"));
+        assertTrue(logs.contains("After: 71.25%"));
+        assertTrue(logs.contains("Delta: +8.75"));
+    }
+
+    @Test
     void runDoesNotRewritePathWhenResponseOmitsFinalTestFile() throws Exception {
         Path cutPath = write(
                 "src/main/java/com/example/VetController.java",
@@ -221,13 +269,32 @@ class JunitLlmSessionRunnerTest {
             String finalTestFile,
             List<String> pendingBashCommands
     ) {
+        return doneOutput(sessionId, finalTestFilePath, finalTestFile, pendingBashCommands, null);
+    }
+
+    private static FetchJobResponse doneOutput(
+            String sessionId,
+            String finalTestFilePath,
+            String finalTestFile,
+            List<String> pendingBashCommands,
+            String coverageSummaryText
+    ) {
         return new FetchJobResponse(
                 "done",
                 new FetchJobResponse.FetchJobOutput(
                         sessionId,
                         finalTestFilePath,
                         finalTestFile,
-                        pendingBashCommands
+                        pendingBashCommands,
+                        coverageSummaryText == null
+                                ? null
+                                : new FetchJobResponse.CoverageSummary(
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        coverageSummaryText
+                                )
                 ),
                 null,
                 null

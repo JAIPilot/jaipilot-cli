@@ -28,7 +28,27 @@ public record FetchJobResponse(
             @JsonAlias("session_id") @JsonProperty("sessionId") String sessionId,
             @JsonAlias("final_test_file_path") @JsonProperty("finalTestFilePath") String finalTestFilePath,
             @JsonAlias("final_test_file") @JsonProperty("finalTestFile") String finalTestFile,
-            @JsonAlias("pending_bash_commands") @JsonProperty("pendingBashCommands") List<String> pendingBashCommands
+            @JsonAlias("pending_bash_commands") @JsonProperty("pendingBashCommands") List<String> pendingBashCommands,
+            @JsonAlias("coverage_summary") @JsonProperty("coverageSummary") CoverageSummary coverageSummary
+    ) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record CoverageSummary(
+            CoverageSnapshot before,
+            CoverageSnapshot after,
+            @JsonAlias("delta_percentage_points") @JsonProperty("deltaPercentagePoints") Double deltaPercentagePoints,
+            @JsonAlias("snapshot_count") @JsonProperty("snapshotCount") Integer snapshotCount,
+            String text
+    ) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record CoverageSnapshot(
+            String command,
+            @JsonAlias("primary_percent") @JsonProperty("primaryPercent") Double primaryPercent,
+            @JsonAlias("primary_metric") @JsonProperty("primaryMetric") String primaryMetric,
+            @JsonAlias("metric_lines") @JsonProperty("metricLines") List<String> metricLines
     ) {
     }
 }
