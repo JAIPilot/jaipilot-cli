@@ -88,8 +88,14 @@ runs:
         fi
         export JAIPILOT_OIDC_AUDIENCE="${{ inputs.jaipilot-oidc-audience }}"
 
-        effective_auth="$("${{ github.action_path }}/scripts/resolve-jaipilot-auth.sh" "${{ inputs.jaipilot-auth-token }}")"
-        export JAIPILOT_AUTH_TOKEN="$effective_auth"
+        resolve_effective_auth() {
+          local resolved_auth=""
+          resolved_auth="$("${{ github.action_path }}/scripts/resolve-jaipilot-auth.sh" "${{ inputs.jaipilot-auth-token }}")" || return 1
+          if [ -z "$resolved_auth" ]; then
+            return 1
+          fi
+          printf '%s\n' "$resolved_auth"
+        }
 
         changed_files=""
 
@@ -150,10 +156,36 @@ runs:
         for class_path in "${java_files[@]}"; do
           processed=$((processed + 1))
           echo "[$processed/${#java_files[@]}] jaipilot generate $class_path"
-          if ! jaipilot generate "$class_path"; then
+
+          if ! effective_auth="$(resolve_effective_auth)"; then
             failed=$((failed + 1))
-            echo "Generation failed for: $class_path" >&2
+            echo "Failed to resolve JAIPilot auth token for: $class_path" >&2
+            continue
           fi
+          export JAIPILOT_AUTH_TOKEN="$effective_auth"
+
+          generate_log="$(mktemp)"
+          if ! jaipilot generate "$class_path" 2>&1 | tee "$generate_log"; then
+            if grep -Fq "Unauthorized while calling JAIPilot backend: Unauthorized" "$generate_log"; then
+              echo "Received Unauthorized for $class_path. Refreshing auth token and retrying once." >&2
+              if ! effective_auth="$(resolve_effective_auth)"; then
+                failed=$((failed + 1))
+                echo "Retry auth refresh failed for: $class_path" >&2
+                rm -f "$generate_log"
+                continue
+              fi
+              export JAIPILOT_AUTH_TOKEN="$effective_auth"
+
+              if ! jaipilot generate "$class_path"; then
+                failed=$((failed + 1))
+                echo "Generation failed after auth retry for: $class_path" >&2
+              fi
+            else
+              failed=$((failed + 1))
+              echo "Generation failed for: $class_path" >&2
+            fi
+          fi
+          rm -f "$generate_log"
         done
 
         mapfile -d '' -t classpath_artifacts < <(find . -type f -name '.classpath.txt' -print0)
