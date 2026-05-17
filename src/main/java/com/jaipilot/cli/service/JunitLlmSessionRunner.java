@@ -16,6 +16,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 public final class JunitLlmSessionRunner {
@@ -296,7 +297,75 @@ public final class JunitLlmSessionRunner {
         if (coverageSummary == null) {
             return null;
         }
-        return blankToNull(coverageSummary.text());
+
+        List<String> structuredLines = buildStructuredCoverageSummaryLines(coverageSummary);
+        if (!structuredLines.isEmpty()) {
+            return String.join("\n", structuredLines);
+        }
+
+        return sanitizeCoverageSummaryText(coverageSummary.text());
+    }
+
+    private List<String> buildStructuredCoverageSummaryLines(FetchJobResponse.CoverageSummary coverageSummary) {
+        List<String> lines = new ArrayList<>();
+        appendCoverageSnapshotLine(lines, "Before", coverageSummary.before());
+        appendCoverageSnapshotLine(lines, "After", coverageSummary.after());
+
+        if (coverageSummary.deltaPercentagePoints() != null) {
+            lines.add("Delta: " + formatSignedDelta(coverageSummary.deltaPercentagePoints()));
+        }
+
+        return lines;
+    }
+
+    private void appendCoverageSnapshotLine(
+            List<String> lines,
+            String label,
+            FetchJobResponse.CoverageSnapshot coverageSnapshot
+    ) {
+        if (coverageSnapshot == null || coverageSnapshot.primaryPercent() == null) {
+            return;
+        }
+        lines.add(label + ": " + formatPercent(coverageSnapshot.primaryPercent()));
+    }
+
+    private String sanitizeCoverageSummaryText(String coverageSummaryText) {
+        String normalizedText = blankToNull(coverageSummaryText);
+        if (normalizedText == null) {
+            return null;
+        }
+
+        List<String> lines = new ArrayList<>();
+        for (String line : normalizedText.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1)) {
+            String trimmedLine = line == null ? "" : line.trim();
+            if (trimmedLine.isBlank() || containsHtml(trimmedLine)) {
+                continue;
+            }
+
+            String normalizedLower = trimmedLine.toLowerCase(Locale.ROOT);
+            if (
+                    (normalizedLower.startsWith("before:") || normalizedLower.startsWith("after:")) &&
+                            trimmedLine.contains("%")
+            ) {
+                lines.add(trimmedLine);
+            } else if (normalizedLower.startsWith("delta:")) {
+                lines.add(trimmedLine);
+            }
+        }
+
+        return lines.isEmpty() ? null : String.join("\n", lines);
+    }
+
+    private boolean containsHtml(String value) {
+        return value.contains("<") && value.contains(">");
+    }
+
+    private String formatPercent(Double percent) {
+        return String.format(Locale.ROOT, "%.2f%%", percent);
+    }
+
+    private String formatSignedDelta(Double deltaPercentagePoints) {
+        return String.format(Locale.ROOT, "%+.2f pp", deltaPercentagePoints);
     }
 
     private List<String> normalizeList(List<String> values) {

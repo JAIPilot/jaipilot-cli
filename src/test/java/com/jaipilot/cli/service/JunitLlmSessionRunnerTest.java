@@ -188,6 +188,121 @@ class JunitLlmSessionRunnerTest {
     }
 
     @Test
+    void runFiltersRawHtmlOutOfCoverageSummaryLogs() throws Exception {
+        Path cutPath = write(
+                "src/main/java/com/example/OrderController.java",
+                """
+                package com.example;
+
+                public class OrderController {
+                }
+                """
+        );
+        String testSource = "package com.example;\n\nclass OrderControllerTest {\n}\n";
+        String coverageSummary = """
+                Coverage Metrics
+                Before: 49.00% (line coverage)
+                Before command: grep -A5 "VetController" target/site/jacoco/index.html
+                After: 49.00% (line coverage)
+                After command: grep -A5 "VetController" target/site/jacoco/index.html
+                Delta: 0.00 pp
+                Before metrics:
+                <?xml version="1.0" encoding="UTF-8"?><html><body>huge html</body></html>
+                After metrics:
+                <?xml version="1.0" encoding="UTF-8"?><html><body>huge html</body></html>
+                """;
+        StringWriter output = new StringWriter();
+
+        StubBackendClient backendClient = new StubBackendClient(
+                doneOutput(
+                        "session-1",
+                        "src/test/java/com/example/OrderControllerTest.java",
+                        testSource,
+                        List.of(),
+                        coverageSummary
+                )
+        );
+
+        JunitLlmSessionRunner runner = new JunitLlmSessionRunner(
+                backendClient,
+                new ProjectFileService(),
+                new JunitLlmSessionRunner.ConsoleLogger(new PrintWriter(output, true))
+        );
+
+        runner.run(new JunitLlmSessionRequest(
+                tempDir,
+                cutPath,
+                null,
+                null,
+                "",
+                "",
+                null
+        ));
+
+        String logs = output.toString();
+        assertTrue(logs.contains("Coverage summary:"));
+        assertTrue(logs.contains("Before: 49.00% (line coverage)"));
+        assertTrue(logs.contains("After: 49.00% (line coverage)"));
+        assertTrue(logs.contains("Delta: 0.00 pp"));
+        assertFalse(logs.contains("Before command:"));
+        assertFalse(logs.contains("After command:"));
+        assertFalse(logs.contains("<?xml version=\"1.0\""));
+    }
+
+    @Test
+    void runBuildsCoverageSummaryFromStructuredNumbers() throws Exception {
+        Path cutPath = write(
+                "src/main/java/com/example/OrderController.java",
+                """
+                package com.example;
+
+                public class OrderController {
+                }
+                """
+        );
+        String testSource = "package com.example;\n\nclass OrderControllerTest {\n}\n";
+        StringWriter output = new StringWriter();
+
+        StubBackendClient backendClient = new StubBackendClient(
+                doneOutputWithCoverageSummary(
+                        "session-1",
+                        "src/test/java/com/example/OrderControllerTest.java",
+                        testSource,
+                        List.of(),
+                        new FetchJobResponse.CoverageSummary(
+                                new FetchJobResponse.CoverageSnapshot("cmd-1", 49.0, "line", List.of("49%")),
+                                new FetchJobResponse.CoverageSnapshot("cmd-2", 57.25, "line", List.of("57.25%")),
+                                8.25,
+                                2,
+                                null
+                        )
+                )
+        );
+
+        JunitLlmSessionRunner runner = new JunitLlmSessionRunner(
+                backendClient,
+                new ProjectFileService(),
+                new JunitLlmSessionRunner.ConsoleLogger(new PrintWriter(output, true))
+        );
+
+        runner.run(new JunitLlmSessionRequest(
+                tempDir,
+                cutPath,
+                null,
+                null,
+                "",
+                "",
+                null
+        ));
+
+        String logs = output.toString();
+        assertTrue(logs.contains("Coverage summary:"));
+        assertTrue(logs.contains("Before: 49.00%"));
+        assertTrue(logs.contains("After: 57.25%"));
+        assertTrue(logs.contains("Delta: +8.25 pp"));
+    }
+
+    @Test
     void runDoesNotRewritePathWhenResponseOmitsFinalTestFile() throws Exception {
         Path cutPath = write(
                 "src/main/java/com/example/VetController.java",
@@ -279,6 +394,30 @@ class JunitLlmSessionRunnerTest {
             List<String> pendingBashCommands,
             String coverageSummaryText
     ) {
+        return doneOutputWithCoverageSummary(
+                sessionId,
+                finalTestFilePath,
+                finalTestFile,
+                pendingBashCommands,
+                coverageSummaryText == null
+                        ? null
+                        : new FetchJobResponse.CoverageSummary(
+                                null,
+                                null,
+                                null,
+                                null,
+                                coverageSummaryText
+                        )
+        );
+    }
+
+    private static FetchJobResponse doneOutputWithCoverageSummary(
+            String sessionId,
+            String finalTestFilePath,
+            String finalTestFile,
+            List<String> pendingBashCommands,
+            FetchJobResponse.CoverageSummary coverageSummary
+    ) {
         return new FetchJobResponse(
                 "done",
                 new FetchJobResponse.FetchJobOutput(
@@ -286,15 +425,7 @@ class JunitLlmSessionRunnerTest {
                         finalTestFilePath,
                         finalTestFile,
                         pendingBashCommands,
-                        coverageSummaryText == null
-                                ? null
-                                : new FetchJobResponse.CoverageSummary(
-                                        null,
-                                        null,
-                                        null,
-                                        null,
-                                        coverageSummaryText
-                                )
+                        coverageSummary
                 ),
                 null,
                 null
