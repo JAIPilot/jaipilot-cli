@@ -68,16 +68,19 @@ JAIPilot generates high-quality tests for changed Java production classes in pul
 
 ## Local CLI Auth
 
-For local CLI runs, you can persist your token once:
+For local CLI runs, sign in once with browser auth flow:
 
 ```bash
-jaipilot login <jaipilot-auth-token>
+jaipilot login
 ```
 
 `jaipilot generate ...` will then use:
 
 1. `JAIPILOT_AUTH_TOKEN` (if set), otherwise
-2. the token saved by `jaipilot login`.
+2. the stored browser-login credentials (`~/.config/jaipilot/credentials.json`), otherwise
+3. the token saved by `jaipilot login <jaipilot-auth-token>`.
+
+If no auth is available, `jaipilot generate ...` automatically starts the same browser login flow as `jaipilot login`.
 
 ## Manual Fallback
 

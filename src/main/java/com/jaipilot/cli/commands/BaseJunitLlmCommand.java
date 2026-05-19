@@ -1,6 +1,8 @@
 package com.jaipilot.cli.commands;
 
 import com.jaipilot.cli.JaipilotEndpointConfig;
+import com.jaipilot.cli.auth.AuthService;
+import com.jaipilot.cli.auth.CredentialsStore;
 import com.jaipilot.cli.backend.HttpJunitLlmBackendClient;
 import com.jaipilot.cli.backend.JunitLlmBackendClient;
 import com.jaipilot.cli.model.JunitLlmSessionRequest;
@@ -8,8 +10,8 @@ import com.jaipilot.cli.model.JunitLlmSessionResult;
 import com.jaipilot.cli.service.JunitLlmSessionRunner;
 import com.jaipilot.cli.service.ProjectFileService;
 import com.jaipilot.cli.util.JaipilotAuthTokenStore;
-import java.io.PrintWriter;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -23,17 +25,25 @@ import picocli.CommandLine.Spec;
 
 abstract class BaseJunitLlmCommand implements Callable<Integer> {
 
+    private static final Duration AUTO_LOGIN_TIMEOUT = Duration.ofSeconds(180);
+
     @Spec
     private CommandSpec spec;
 
     private final ProjectFileService fileService;
+    private final AuthService authService;
 
     BaseJunitLlmCommand() {
-        this(new ProjectFileService());
+        this(new ProjectFileService(), new AuthService(new CredentialsStore()));
     }
 
     BaseJunitLlmCommand(ProjectFileService fileService) {
+        this(fileService, new AuthService(new CredentialsStore()));
+    }
+
+    BaseJunitLlmCommand(ProjectFileService fileService, AuthService authService) {
         this.fileService = fileService;
+        this.authService = authService;
     }
 
     @Override
@@ -49,7 +59,7 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
             Path resolvedCutPath = resolveCutPath(workingDirectory);
             Path normalizedProjectRoot = inferProjectRoot(workingDirectory, resolvedCutPath);
 
-            String initialAuthToken = resolveAuthToken();
+            String initialAuthToken = resolveAuthToken(out, err);
             JunitLlmBackendClient backendClient = new HttpJunitLlmBackendClient(
                     JaipilotEndpointConfig.resolveBackendUrl(),
                     initialAuthToken,
@@ -89,12 +99,44 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
         return fileService;
     }
 
-    private String resolveAuthToken() {
-        String authToken;
+    private String resolveAuthToken(PrintWriter out, PrintWriter err) {
+        String authToken = resolveAuthTokenWithoutLogin();
+        if (authToken != null) {
+            return authToken;
+        }
+
+        if (shouldAttemptAutoLogin()) {
+            out.println("No JAIPilot auth token found. Starting `jaipilot login` browser auth flow...");
+            out.flush();
+            try {
+                authService.startLogin(AUTO_LOGIN_TIMEOUT, out, err);
+            } catch (IllegalStateException exception) {
+                throw new CommandLine.ParameterException(
+                        spec.commandLine(),
+                        "JAIPilot login failed: " + exception.getMessage(),
+                        exception
+                );
+            }
+            authToken = resolveAuthTokenWithoutLogin();
+            if (authToken != null) {
+                return authToken;
+            }
+        }
+
+        if (authToken == null) {
+            throw new CommandLine.ParameterException(
+                    spec.commandLine(),
+                    "Set JAIPILOT_AUTH_TOKEN or run `jaipilot login` to sign in."
+            );
+        }
+        return authToken;
+    }
+
+    private String resolveAuthTokenWithoutLogin() {
         try {
-            authToken = firstNonBlank(
+            return firstNonBlank(
                     System.getenv("JAIPILOT_AUTH_TOKEN"),
-                    System.getenv("JAIPILOT_LICENSE_KEY"),
+                    authService.ensureFreshAccessToken(),
                     JaipilotAuthTokenStore.readBrowserAccessToken(),
                     JaipilotAuthTokenStore.readAuthToken()
             );
@@ -105,21 +147,13 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
                     exception
             );
         }
-        if (authToken == null) {
-            throw new CommandLine.ParameterException(
-                    spec.commandLine(),
-                    "Set JAIPILOT_AUTH_TOKEN or JAIPILOT_LICENSE_KEY, run 'jaipilot login <token>', or provide browser-login "
-                            + "credentials at ~/.config/jaipilot/credentials.json."
-            );
-        }
-        return authToken;
     }
 
     private List<String> resolveAuthTokenCandidates(String currentToken) {
         LinkedHashSet<String> candidates = new LinkedHashSet<>();
         addCandidate(candidates, currentToken);
         addCandidate(candidates, System.getenv("JAIPILOT_AUTH_TOKEN"));
-        addCandidate(candidates, System.getenv("JAIPILOT_LICENSE_KEY"));
+        addCandidate(candidates, authService.ensureFreshAccessToken());
         try {
             addCandidate(candidates, JaipilotAuthTokenStore.readBrowserAccessToken());
             addCandidate(candidates, JaipilotAuthTokenStore.readAuthToken());
@@ -127,6 +161,15 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
             // Ignore read failures and keep existing candidate set.
         }
         return new ArrayList<>(candidates);
+    }
+
+    private boolean shouldAttemptAutoLogin() {
+        String ci = System.getenv("CI");
+        if (ci != null && !ci.isBlank() && !"false".equalsIgnoreCase(ci)) {
+            return false;
+        }
+        String githubActions = System.getenv("GITHUB_ACTIONS");
+        return githubActions == null || githubActions.isBlank() || "false".equalsIgnoreCase(githubActions);
     }
 
     private static void addCandidate(LinkedHashSet<String> candidates, String candidate) {

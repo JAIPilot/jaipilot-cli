@@ -245,8 +245,8 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
     private String extractUnauthorizedMessage(String body) {
         String backendError = extractErrorMessage(body);
         if (backendError == null || backendError.isBlank() || "Backend request failed.".equals(backendError)) {
-            return "Unauthorized while calling JAIPilot backend. Auth token may be expired. Re-run `jaipilot login <token>` "
-                    + "or refresh JAIPILOT_AUTH_TOKEN / JAIPILOT_LICENSE_KEY.";
+            return "Unauthorized while calling JAIPilot backend. Auth token may be expired. Re-run `jaipilot login` "
+                    + "or refresh JAIPILOT_AUTH_TOKEN.";
         }
         return "Unauthorized while calling JAIPilot backend: " + backendError;
     }

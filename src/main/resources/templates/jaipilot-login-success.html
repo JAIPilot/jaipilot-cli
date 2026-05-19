@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JAIPilot Connected</title>
+</head>
+<body style="font-family: 'Segoe UI', sans-serif; padding: 24px;">
+  <script>
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  </script>
+  <h1>JAIPilot is connected to the CLI</h1>
+  <p>Signed in as: {{SIGNED_IN_EMAIL}}</p>
+  <p>You can now safely close this tab and switch back to your terminal</p>
+</body>
+</html>
