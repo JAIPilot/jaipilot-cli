@@ -2,7 +2,7 @@
   "name": "jaipilot-vscode",
   "displayName": "JAIPilot – One-Click AI Agent for Java Unit Testing",
   "description": "JAIPilot – One-Click AI Agent for Java Unit Testing, AI-Powered Unit Tests for Java — generate, run, and fix tests automatically inside VSCode.",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "jaipilot",
   "license": "MIT",
   "homepage": "https://jaipilot.com",
