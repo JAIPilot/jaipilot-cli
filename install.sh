@@ -101,8 +101,7 @@ resolve_latest_version() {
     | tr ',' '\n' \
     | sed -n 's/^[[:space:]]*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
     | grep -E '^v[0-9]+(\.[0-9]+)*$' \
-    | sort -V \
-    | tail -n 1)
+    | head -n 1)
 
   [ -n "$version" ] || die "Failed to determine the latest JAIPilot semantic release version."
   strip_v "$version"
