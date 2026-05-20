@@ -8,6 +8,7 @@ import com.jaipilot.cli.model.JunitLlmSessionRequest;
 import com.jaipilot.cli.model.JunitLlmSessionResult;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -17,6 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class JunitLlmSessionRunnerTest {
 
@@ -345,6 +347,164 @@ class JunitLlmSessionRunnerTest {
     }
 
     @Test
+    void runRetriesWhenPolledJobStatusIsError() throws Exception {
+        Path cutPath = write(
+                "src/main/java/com/example/RetryController.java",
+                """
+                package com.example;
+
+                public class RetryController {
+                }
+                """
+        );
+        Path outputPath = tempDir.resolve("src/test/java/com/example/RetryControllerTest.java");
+        String testSource = "package com.example;\n\nclass RetryControllerTest {\n}\n";
+
+        StubBackendClient backendClient = new StubBackendClient(
+                new FetchJobResponse("error", null, "temporary backend error", null),
+                doneOutput(
+                        "session-2",
+                        "src/test/java/com/example/RetryControllerTest.java",
+                        testSource,
+                        List.of()
+                )
+        );
+
+        JunitLlmSessionRunner runner = retryRunner(backendClient, 2, 10);
+        JunitLlmSessionResult result = runner.run(new JunitLlmSessionRequest(
+                tempDir,
+                cutPath,
+                null,
+                null,
+                "",
+                "",
+                null
+        ));
+
+        assertEquals(2, backendClient.requests.size());
+        assertEquals(outputPath, result.outputPath());
+        assertEquals(testSource, Files.readString(outputPath));
+    }
+
+    @Test
+    void runRetriesWhenPollingTimesOut() throws Exception {
+        Path cutPath = write(
+                "src/main/java/com/example/TimeoutController.java",
+                """
+                package com.example;
+
+                public class TimeoutController {
+                }
+                """
+        );
+        String testSource = "package com.example;\n\nclass TimeoutControllerTest {\n}\n";
+
+        StubBackendClient backendClient = new StubBackendClient(
+                new FetchJobResponse("processing", null, null, null),
+                doneOutput(
+                        "session-2",
+                        "src/test/java/com/example/TimeoutControllerTest.java",
+                        testSource,
+                        List.of()
+                )
+        );
+
+        JunitLlmSessionRunner runner = retryRunner(backendClient, 1, 2);
+        JunitLlmSessionResult result = runner.run(new JunitLlmSessionRequest(
+                tempDir,
+                cutPath,
+                null,
+                null,
+                "",
+                "",
+                null
+        ));
+
+        assertEquals(2, backendClient.requests.size());
+        assertEquals(
+                tempDir.resolve("src/test/java/com/example/TimeoutControllerTest.java"),
+                result.outputPath()
+        );
+        assertEquals(testSource, Files.readString(result.outputPath()));
+    }
+
+    @Test
+    void runRetriesWhenPollingHitsIntermittentNetworkFailure() throws Exception {
+        Path cutPath = write(
+                "src/main/java/com/example/NetworkController.java",
+                """
+                package com.example;
+
+                public class NetworkController {
+                }
+                """
+        );
+        String testSource = "package com.example;\n\nclass NetworkControllerTest {\n}\n";
+
+        StubBackendClient backendClient = new StubBackendClient(
+                new IOException("temporary network failure"),
+                doneOutput(
+                        "session-2",
+                        "src/test/java/com/example/NetworkControllerTest.java",
+                        testSource,
+                        List.of()
+                )
+        );
+
+        JunitLlmSessionRunner runner = retryRunner(backendClient, 1, 10);
+        JunitLlmSessionResult result = runner.run(new JunitLlmSessionRequest(
+                tempDir,
+                cutPath,
+                null,
+                null,
+                "",
+                "",
+                null
+        ));
+
+        assertEquals(2, backendClient.requests.size());
+        assertEquals(
+                tempDir.resolve("src/test/java/com/example/NetworkControllerTest.java"),
+                result.outputPath()
+        );
+        assertEquals(testSource, Files.readString(result.outputPath()));
+    }
+
+    @Test
+    void runFailsAfterPollingRetryLimitForErrorStatus() throws Exception {
+        Path cutPath = write(
+                "src/main/java/com/example/FailController.java",
+                """
+                package com.example;
+
+                public class FailController {
+                }
+                """
+        );
+
+        StubBackendClient backendClient = new StubBackendClient(
+                new FetchJobResponse("error", null, "still failing", null),
+                new FetchJobResponse("error", null, "still failing", null)
+        );
+
+        JunitLlmSessionRunner runner = retryRunner(backendClient, 1, 10);
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> runner.run(new JunitLlmSessionRequest(
+                        tempDir,
+                        cutPath,
+                        null,
+                        null,
+                        "",
+                        "",
+                        null
+                ))
+        );
+        assertTrue(exception.getMessage().contains("still failing"));
+        assertEquals(2, backendClient.requests.size());
+    }
+
+    @Test
     void consoleLoggerAnnouncesColoredDiffOnce() {
         StringWriter output = new StringWriter();
         JunitLlmSessionRunner.ConsoleLogger logger = new JunitLlmSessionRunner.ConsoleLogger(
@@ -360,6 +520,26 @@ class JunitLlmSessionRunnerTest {
         assertTrue(text.contains("\u001B[32m"));
         assertTrue(text.contains("+ class NewTest {"));
         assertFalse(text.contains("No file changes."));
+    }
+
+    private JunitLlmSessionRunner retryRunner(
+            StubBackendClient backendClient,
+            int maxPollRecoveryRetries,
+            int maxFetchAttempts
+    ) {
+        return new JunitLlmSessionRunner(
+                backendClient,
+                new ProjectFileService(),
+                new JunitLlmSessionRunner.ConsoleLogger(new PrintWriter(new StringWriter(), true)),
+                new ProcessExecutor(),
+                millis -> { },
+                maxFetchAttempts,
+                0L,
+                maxPollRecoveryRetries,
+                1L,
+                1L,
+                0L
+        );
     }
 
     private Path write(String relativePath, String content) throws Exception {
@@ -426,9 +606,9 @@ class JunitLlmSessionRunnerTest {
     private static final class StubBackendClient implements JunitLlmBackendClient {
 
         private final List<InvokeJunitLlmRequest> requests = new ArrayList<>();
-        private final List<FetchJobResponse> fetchResponses;
+        private final List<Object> fetchResponses;
 
-        private StubBackendClient(FetchJobResponse... fetchResponses) {
+        private StubBackendClient(Object... fetchResponses) {
             this.fetchResponses = List.of(fetchResponses);
         }
 
@@ -440,9 +620,16 @@ class JunitLlmSessionRunnerTest {
         }
 
         @Override
-        public FetchJobResponse fetchJob(String jobId) {
+        public FetchJobResponse fetchJob(String jobId) throws Exception {
             int index = Integer.parseInt(jobId.substring("job-".length())) - 1;
-            return fetchResponses.get(Math.min(index, fetchResponses.size() - 1));
+            Object response = fetchResponses.get(Math.min(index, fetchResponses.size() - 1));
+            if (response instanceof FetchJobResponse fetchJobResponse) {
+                return fetchJobResponse;
+            }
+            if (response instanceof Exception exception) {
+                throw exception;
+            }
+            throw new IllegalStateException("Unsupported stub response type: " + response);
         }
     }
 }

@@ -18,19 +18,36 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 
 public final class JunitLlmSessionRunner {
 
     private static final int MAX_INTERACTIONS = 100;
     private static final int MAX_FETCH_ATTEMPTS = 450;
     private static final long FETCH_DELAY_MILLIS = 1_000L;
+    private static final int MAX_POLL_RECOVERY_RETRIES = 10;
+    private static final long INITIAL_POLL_RECOVERY_BACKOFF_MILLIS = 1_000L;
+    private static final long MAX_POLL_RECOVERY_BACKOFF_MILLIS = 30_000L;
+    private static final long POLL_RECOVERY_JITTER_MILLIS = 250L;
     private static final Duration BASH_COMMAND_TIMEOUT = Duration.ofMinutes(10);
     private static final PrintWriter QUIET_WRITER = new PrintWriter(Writer.nullWriter());
+
+    @FunctionalInterface
+    interface SleepStrategy {
+        void sleep(long millis) throws InterruptedException;
+    }
 
     private final JunitLlmBackendClient backendClient;
     private final ProjectFileService fileService;
     private final ConsoleLogger consoleLogger;
     private final ProcessExecutor processExecutor;
+    private final SleepStrategy sleepStrategy;
+    private final int maxFetchAttempts;
+    private final long fetchDelayMillis;
+    private final int maxPollRecoveryRetries;
+    private final long initialPollRecoveryBackoffMillis;
+    private final long maxPollRecoveryBackoffMillis;
+    private final long pollRecoveryJitterMillis;
 
     public JunitLlmSessionRunner(
             JunitLlmBackendClient backendClient,
@@ -41,7 +58,14 @@ public final class JunitLlmSessionRunner {
                 backendClient,
                 fileService,
                 consoleLogger,
-                new ProcessExecutor()
+                new ProcessExecutor(),
+                Thread::sleep,
+                MAX_FETCH_ATTEMPTS,
+                FETCH_DELAY_MILLIS,
+                MAX_POLL_RECOVERY_RETRIES,
+                INITIAL_POLL_RECOVERY_BACKOFF_MILLIS,
+                MAX_POLL_RECOVERY_BACKOFF_MILLIS,
+                POLL_RECOVERY_JITTER_MILLIS
         );
     }
 
@@ -51,10 +75,65 @@ public final class JunitLlmSessionRunner {
             ConsoleLogger consoleLogger,
             ProcessExecutor processExecutor
     ) {
+        this(
+                backendClient,
+                fileService,
+                consoleLogger,
+                processExecutor,
+                Thread::sleep,
+                MAX_FETCH_ATTEMPTS,
+                FETCH_DELAY_MILLIS,
+                MAX_POLL_RECOVERY_RETRIES,
+                INITIAL_POLL_RECOVERY_BACKOFF_MILLIS,
+                MAX_POLL_RECOVERY_BACKOFF_MILLIS,
+                POLL_RECOVERY_JITTER_MILLIS
+        );
+    }
+
+    JunitLlmSessionRunner(
+            JunitLlmBackendClient backendClient,
+            ProjectFileService fileService,
+            ConsoleLogger consoleLogger,
+            ProcessExecutor processExecutor,
+            SleepStrategy sleepStrategy,
+            int maxFetchAttempts,
+            long fetchDelayMillis,
+            int maxPollRecoveryRetries,
+            long initialPollRecoveryBackoffMillis,
+            long maxPollRecoveryBackoffMillis,
+            long pollRecoveryJitterMillis
+    ) {
         this.backendClient = backendClient;
         this.fileService = fileService;
         this.consoleLogger = consoleLogger;
         this.processExecutor = processExecutor == null ? new ProcessExecutor() : processExecutor;
+        this.sleepStrategy = sleepStrategy == null ? Thread::sleep : sleepStrategy;
+        if (maxFetchAttempts <= 0) {
+            throw new IllegalArgumentException("maxFetchAttempts must be greater than zero.");
+        }
+        if (fetchDelayMillis < 0) {
+            throw new IllegalArgumentException("fetchDelayMillis must be non-negative.");
+        }
+        if (maxPollRecoveryRetries < 0) {
+            throw new IllegalArgumentException("maxPollRecoveryRetries must be non-negative.");
+        }
+        if (initialPollRecoveryBackoffMillis <= 0) {
+            throw new IllegalArgumentException("initialPollRecoveryBackoffMillis must be greater than zero.");
+        }
+        if (maxPollRecoveryBackoffMillis < initialPollRecoveryBackoffMillis) {
+            throw new IllegalArgumentException(
+                    "maxPollRecoveryBackoffMillis must be greater than or equal to initialPollRecoveryBackoffMillis."
+            );
+        }
+        if (pollRecoveryJitterMillis < 0) {
+            throw new IllegalArgumentException("pollRecoveryJitterMillis must be non-negative.");
+        }
+        this.maxFetchAttempts = maxFetchAttempts;
+        this.fetchDelayMillis = fetchDelayMillis;
+        this.maxPollRecoveryRetries = maxPollRecoveryRetries;
+        this.initialPollRecoveryBackoffMillis = initialPollRecoveryBackoffMillis;
+        this.maxPollRecoveryBackoffMillis = maxPollRecoveryBackoffMillis;
+        this.pollRecoveryJitterMillis = pollRecoveryJitterMillis;
     }
 
     public JunitLlmSessionResult run(JunitLlmSessionRequest sessionRequest) throws Exception {
@@ -71,20 +150,16 @@ public final class JunitLlmSessionRunner {
 
         for (int interaction = 1; interaction <= MAX_INTERACTIONS; interaction++) {
             consoleLogger.announceStatus();
-            InvokeJunitLlmRequest invokeRequest = new InvokeJunitLlmRequest(
+            InvocationAndPollResult invocationAndPollResult = invokeAndPollWithRetries(
                     currentSessionId,
                     cutName,
-                    null,
                     cutCode,
                     normalizeText(sessionRequest.initialTestClassCode()),
-                    normalizeText(currentTestCode),
+                    currentTestCode,
                     clientLogs
             );
-            InvokeJunitLlmResponse invokeResponse = backendClient.invoke(invokeRequest);
-            currentSessionId = firstNonBlank(invokeResponse.sessionId(), currentSessionId);
-
-            FetchJobResponse fetchJobResponse = pollJob(invokeResponse.jobId());
-            currentSessionId = mergeSessionId(currentSessionId, fetchJobResponse);
+            currentSessionId = invocationAndPollResult.sessionId();
+            FetchJobResponse fetchJobResponse = invocationAndPollResult.fetchJobResponse();
 
             FetchJobResponse.FetchJobOutput output = requireOutput(fetchJobResponse);
             String coverageSummaryText = normalizeCoverageSummaryText(output.coverageSummary());
@@ -158,12 +233,58 @@ public final class JunitLlmSessionRunner {
         throw new IllegalStateException("Exceeded the maximum number of backend interactions.");
     }
 
+    private InvocationAndPollResult invokeAndPollWithRetries(
+            String currentSessionId,
+            String cutName,
+            String cutCode,
+            String initialTestClassCode,
+            String currentTestCode,
+            String clientLogs
+    ) throws Exception {
+        String sessionId = currentSessionId;
+        long backoffMillis = initialPollRecoveryBackoffMillis;
+        for (int retry = 0; retry <= maxPollRecoveryRetries; retry++) {
+            try {
+                InvokeJunitLlmRequest invokeRequest = new InvokeJunitLlmRequest(
+                        sessionId,
+                        cutName,
+                        null,
+                        cutCode,
+                        normalizeText(initialTestClassCode),
+                        normalizeText(currentTestCode),
+                        clientLogs
+                );
+                InvokeJunitLlmResponse invokeResponse = backendClient.invoke(invokeRequest);
+                sessionId = firstNonBlank(invokeResponse.sessionId(), sessionId);
+
+                FetchJobResponse fetchJobResponse = pollJob(invokeResponse.jobId());
+                sessionId = mergeSessionId(sessionId, fetchJobResponse);
+                return new InvocationAndPollResult(sessionId, fetchJobResponse);
+            } catch (InterruptedException interruptedException) {
+                Thread.currentThread().interrupt();
+                throw interruptedException;
+            } catch (Exception exception) {
+                if (!isRetriableInvokeOrPollFailure(exception) || retry >= maxPollRecoveryRetries) {
+                    throw exception;
+                }
+                long delayMillis = retryDelayWithJitter(backoffMillis);
+                consoleLogger.info(
+                        "Backend request failed. Retrying (" + (retry + 1) + "/" + maxPollRecoveryRetries
+                                + ") in " + delayMillis + "ms: " + describeException(exception)
+                );
+                sleep(delayMillis);
+                backoffMillis = Math.min(backoffMillis * 2L, maxPollRecoveryBackoffMillis);
+            }
+        }
+        throw new IllegalStateException("Backend request failed after retries.");
+    }
+
     private FetchJobResponse pollJob(String jobId) throws Exception {
         if (jobId == null || jobId.isBlank()) {
             throw new IllegalStateException("Backend did not return a job.");
         }
         String lastStatus = "";
-        for (int attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt++) {
+        for (int attempt = 1; attempt <= maxFetchAttempts; attempt++) {
             FetchJobResponse response = backendClient.fetchJob(jobId);
             String status = normalizeStatus(response.status());
             lastStatus = status;
@@ -172,19 +293,66 @@ public final class JunitLlmSessionRunner {
                 return response;
             }
             if (isFailure(status)) {
-                throw new IllegalStateException(firstNonBlank(
+                throw new PollJobStatusException(status, firstNonBlank(
                         response.errorMessage(),
                         "Backend job failed."
                 ));
             }
-            Thread.sleep(FETCH_DELAY_MILLIS);
+            sleep(fetchDelayMillis);
         }
-        long timeoutSeconds = (MAX_FETCH_ATTEMPTS * FETCH_DELAY_MILLIS) / 1_000L;
+        long timeoutSeconds = (maxFetchAttempts * fetchDelayMillis) / 1_000L;
         String normalizedStatus = lastStatus == null || lastStatus.isBlank() ? "unknown" : lastStatus;
-        throw new IllegalStateException(
+        throw new PollJobTimeoutException(
                 "Timed out while waiting for backend response for job `" + jobId + "` after "
                         + timeoutSeconds + "s (last status: " + normalizedStatus + ")."
         );
+    }
+
+    private void sleep(long delayMillis) throws InterruptedException {
+        if (delayMillis <= 0) {
+            return;
+        }
+        sleepStrategy.sleep(delayMillis);
+    }
+
+    private boolean isRetriableInvokeOrPollFailure(Exception exception) {
+        if (exception instanceof PollJobTimeoutException) {
+            return true;
+        }
+        if (exception instanceof PollJobStatusException pollJobStatusException) {
+            return "error".equals(pollJobStatusException.normalizedStatus());
+        }
+        return hasCause(exception, java.io.IOException.class);
+    }
+
+    private boolean hasCause(Throwable throwable, Class<? extends Throwable> type) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (type.isInstance(current)) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private long retryDelayWithJitter(long backoffMillis) {
+        long cappedBackoffMillis = Math.max(1L, Math.min(backoffMillis, maxPollRecoveryBackoffMillis));
+        long remainingHeadroom = Math.max(0L, maxPollRecoveryBackoffMillis - cappedBackoffMillis);
+        long jitterBound = Math.min(pollRecoveryJitterMillis, remainingHeadroom);
+        if (jitterBound <= 0L) {
+            return cappedBackoffMillis;
+        }
+        long jitterMillis = ThreadLocalRandom.current().nextLong(jitterBound + 1L);
+        return cappedBackoffMillis + jitterMillis;
+    }
+
+    private String describeException(Exception exception) {
+        String message = blankToNull(exception.getMessage());
+        if (message == null) {
+            return exception.getClass().getSimpleName();
+        }
+        return message;
     }
 
     private FetchJobResponse.FetchJobOutput requireOutput(FetchJobResponse response) {
@@ -426,6 +594,33 @@ public final class JunitLlmSessionRunner {
             return List.of("cmd", "/c", command);
         }
         return List.of("sh", "-lc", command);
+    }
+
+    private record InvocationAndPollResult(
+            String sessionId,
+            FetchJobResponse fetchJobResponse
+    ) {
+    }
+
+    private static final class PollJobStatusException extends IllegalStateException {
+
+        private final String normalizedStatus;
+
+        private PollJobStatusException(String normalizedStatus, String message) {
+            super(message);
+            this.normalizedStatus = normalizedStatus == null ? "" : normalizedStatus;
+        }
+
+        private String normalizedStatus() {
+            return normalizedStatus;
+        }
+    }
+
+    private static final class PollJobTimeoutException extends IllegalStateException {
+
+        private PollJobTimeoutException(String message) {
+            super(message);
+        }
     }
 
     private void appendCommandOutput(StringBuilder logs, String output) {
