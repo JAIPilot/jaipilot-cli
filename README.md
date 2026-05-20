@@ -82,16 +82,6 @@ jaipilot login
 
 If no auth is available, `jaipilot generate ...` automatically starts the same browser login flow as `jaipilot login`.
 
-## Manual Fallback
-
-If you do not use auto-install yet, use the legacy script-based onboarding flow:
-
-```bash
-./scripts/onboard-action-repo.sh --repo <owner/repo> --action-ref action-v1
-```
-
-That flow remains supported as a manual fallback and is documented in `docs/github-action-publishing.md`.
-
 ## Action Publishing
 
 See [docs/github-action-publishing.md](docs/github-action-publishing.md) for release tagging and publishing flow.
