@@ -203,6 +203,10 @@ public final class JunitLlmSessionRunner {
             clientLogs = null;
 
             if (currentTestCode == null || currentTestCode.isBlank()) {
+                String statusMessage = blankToNull(output.statusMessage());
+                if (statusMessage != null) {
+                    throw new IllegalStateException(statusMessage);
+                }
                 throw new IllegalStateException("Backend did not return a test file.");
             }
             if (currentTestFilePath == null || currentTestFilePath.isBlank()) {

@@ -505,6 +505,55 @@ class JunitLlmSessionRunnerTest {
     }
 
     @Test
+    void runSurfacesBackendStatusMessageWhenNoFinalTestFileIsReturned() throws Exception {
+        Path cutPath = write(
+                "src/main/java/com/example/PrecheckController.java",
+                """
+                package com.example;
+
+                public class PrecheckController {
+                }
+                """
+        );
+
+        String statusMessage = "Mandatory precheck failed: initial full build failed. Please fix build errors and retry test generation.";
+        StubBackendClient backendClient = new StubBackendClient(
+                new FetchJobResponse(
+                        "done",
+                        new FetchJobResponse.FetchJobOutput(
+                                "session-1",
+                                null,
+                                "",
+                                statusMessage,
+                                List.of(),
+                                null
+                        ),
+                        null,
+                        null
+                )
+        );
+
+        JunitLlmSessionRunner runner = new JunitLlmSessionRunner(
+                backendClient,
+                new ProjectFileService(),
+                new JunitLlmSessionRunner.ConsoleLogger(new PrintWriter(new StringWriter(), true))
+        );
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> runner.run(new JunitLlmSessionRequest(
+                        tempDir,
+                        cutPath,
+                        null,
+                        null,
+                        "",
+                        "",
+                        null
+                ))
+        );
+        assertEquals(statusMessage, exception.getMessage());
+    }
+
+    @Test
     void consoleLoggerAnnouncesColoredDiffOnce() {
         StringWriter output = new StringWriter();
         JunitLlmSessionRunner.ConsoleLogger logger = new JunitLlmSessionRunner.ConsoleLogger(
@@ -595,6 +644,7 @@ class JunitLlmSessionRunnerTest {
                         sessionId,
                         finalTestFilePath,
                         finalTestFile,
+                        null,
                         pendingBashCommands,
                         coverageSummary
                 ),
