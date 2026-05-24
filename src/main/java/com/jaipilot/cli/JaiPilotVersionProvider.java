@@ -13,7 +13,7 @@ public final class JaiPilotVersionProvider implements IVersionProvider {
         Package commandPackage = JaiPilotCli.class.getPackage();
         String version = commandPackage == null ? null : commandPackage.getImplementationVersion();
         if (version == null || version.isBlank()) {
-            version = "0.3.35";
+            version = "0.3.36";
         }
         return version;
     }
