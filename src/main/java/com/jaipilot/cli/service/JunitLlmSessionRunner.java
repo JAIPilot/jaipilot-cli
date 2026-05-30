@@ -22,7 +22,7 @@ import java.util.concurrent.ThreadLocalRandom;
 
 public final class JunitLlmSessionRunner {
 
-    private static final int MAX_INTERACTIONS = 100;
+    private static final int MAX_INTERACTIONS = 500;
     private static final int MAX_FETCH_ATTEMPTS = 450;
     private static final long FETCH_DELAY_MILLIS = 1_000L;
     private static final int MAX_POLL_RECOVERY_RETRIES = 10;
