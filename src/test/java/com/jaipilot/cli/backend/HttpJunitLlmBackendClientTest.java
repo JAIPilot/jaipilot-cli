@@ -226,7 +226,7 @@ class HttpJunitLlmBackendClientTest {
         HttpJunitLlmBackendClient client = new HttpJunitLlmBackendClient(
                 baseUrl(),
                 "expired-token",
-                currentToken -> List.of("expired-token", "fresh-token")
+                (currentToken, attemptedTokens) -> List.of("expired-token", "fresh-token")
         );
 
         InvokeJunitLlmResponse response = client.invoke(sampleRequest());
@@ -235,6 +235,40 @@ class HttpJunitLlmBackendClientTest {
         assertEquals("Bearer expired-token", firstAuthorization.get());
         assertEquals("Bearer fresh-token", secondAuthorization.get());
         assertEquals("job-1", response.jobId());
+    }
+
+    @Test
+    void invokePassesAttemptedTokensToResolverAfterUnauthorized() throws Exception {
+        AtomicInteger requestCount = new AtomicInteger();
+        AtomicReference<String> secondAuthorization = new AtomicReference<>();
+        AtomicReference<List<String>> attemptedTokensSnapshot = new AtomicReference<>();
+
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/functions/v1/invoke-junit-llm-cli", exchange -> {
+            int current = requestCount.incrementAndGet();
+            if (current == 1) {
+                writeJson(exchange, 401, "{\"error\":\"jwt expired\"}");
+                return;
+            }
+            secondAuthorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            writeJson(exchange, "{\"jobId\":\"job-1\",\"sessionId\":\"session-1\"}");
+        });
+        server.start();
+
+        HttpJunitLlmBackendClient client = new HttpJunitLlmBackendClient(
+                baseUrl(),
+                "expired-token",
+                (currentToken, attemptedTokens) -> {
+                    attemptedTokensSnapshot.set(List.copyOf(attemptedTokens));
+                    return List.of("fresh-token");
+                }
+        );
+
+        client.invoke(sampleRequest());
+
+        assertEquals(2, requestCount.get());
+        assertEquals(List.of("expired-token"), attemptedTokensSnapshot.get());
+        assertEquals("Bearer fresh-token", secondAuthorization.get());
     }
 
     private String baseUrl() {

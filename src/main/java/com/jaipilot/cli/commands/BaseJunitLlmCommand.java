@@ -18,6 +18,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 import picocli.CommandLine.Model.CommandSpec;
@@ -60,10 +62,11 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
             Path normalizedProjectRoot = inferProjectRoot(workingDirectory, resolvedCutPath);
 
             String initialAuthToken = resolveAuthToken(out, err);
+            HttpJunitLlmBackendClient.AuthTokenResolver authTokenResolver = createAuthTokenResolver(out, err);
             JunitLlmBackendClient backendClient = new HttpJunitLlmBackendClient(
                     JaipilotEndpointConfig.resolveBackendUrl(),
                     initialAuthToken,
-                    this::resolveAuthTokenCandidates
+                    authTokenResolver
             );
             JunitLlmSessionRunner sessionRunner = new JunitLlmSessionRunner(
                     backendClient,
@@ -106,17 +109,11 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
         }
 
         if (shouldAttemptAutoLogin()) {
-            out.println("No JAIPilot auth token found. Starting `jaipilot login` browser auth flow...");
-            out.flush();
-            try {
-                authService.startLogin(AUTO_LOGIN_TIMEOUT, out, err);
-            } catch (IllegalStateException exception) {
-                throw new CommandLine.ParameterException(
-                        spec.commandLine(),
-                        "JAIPilot login failed: " + exception.getMessage(),
-                        exception
-                );
-            }
+            runAutoLoginFlow(
+                    out,
+                    err,
+                    "No JAIPilot auth token found. Starting `jaipilot login` browser auth flow..."
+            );
             authToken = resolveAuthTokenWithoutLogin();
             if (authToken != null) {
                 return authToken;
@@ -149,9 +146,41 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
         }
     }
 
-    private List<String> resolveAuthTokenCandidates(String currentToken) {
+    private HttpJunitLlmBackendClient.AuthTokenResolver createAuthTokenResolver(PrintWriter out, PrintWriter err) {
+        AtomicBoolean unauthorizedAutoLoginAttempted = new AtomicBoolean(false);
+        return (currentToken, attemptedTokens) -> resolveAuthTokenCandidates(
+                currentToken,
+                attemptedTokens,
+                out,
+                err,
+                unauthorizedAutoLoginAttempted
+        );
+    }
+
+    private List<String> resolveAuthTokenCandidates(
+            String currentToken,
+            Set<String> attemptedTokens,
+            PrintWriter out,
+            PrintWriter err,
+            AtomicBoolean unauthorizedAutoLoginAttempted
+    ) {
         LinkedHashSet<String> candidates = new LinkedHashSet<>();
         addCandidate(candidates, currentToken);
+        addConfiguredTokenCandidates(candidates);
+        if (shouldAttemptAutoLogin()
+                && !hasUnattemptedCandidate(candidates, attemptedTokens)
+                && unauthorizedAutoLoginAttempted.compareAndSet(false, true)) {
+            runAutoLoginFlow(
+                    out,
+                    err,
+                    "Received Unauthorized from JAIPilot backend. Starting `jaipilot login` browser auth flow..."
+            );
+            addConfiguredTokenCandidates(candidates);
+        }
+        return new ArrayList<>(candidates);
+    }
+
+    private void addConfiguredTokenCandidates(LinkedHashSet<String> candidates) {
         addCandidate(candidates, System.getenv("JAIPILOT_AUTH_TOKEN"));
         addCandidate(candidates, authService.ensureFreshAccessToken());
         try {
@@ -160,7 +189,29 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
         } catch (IOException ignored) {
             // Ignore read failures and keep existing candidate set.
         }
-        return new ArrayList<>(candidates);
+    }
+
+    private boolean hasUnattemptedCandidate(LinkedHashSet<String> candidates, Set<String> attemptedTokens) {
+        for (String candidate : candidates) {
+            if (!attemptedTokens.contains(candidate)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void runAutoLoginFlow(PrintWriter out, PrintWriter err, String message) {
+        out.println(message);
+        out.flush();
+        try {
+            authService.startLogin(AUTO_LOGIN_TIMEOUT, out, err);
+        } catch (IllegalStateException exception) {
+            throw new CommandLine.ParameterException(
+                    spec.commandLine(),
+                    "JAIPilot login failed: " + exception.getMessage(),
+                    exception
+            );
+        }
     }
 
     private boolean shouldAttemptAutoLogin() {

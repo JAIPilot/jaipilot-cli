@@ -33,6 +33,11 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
 
     @FunctionalInterface
     public interface AuthTokenResolver {
+        List<String> resolveTokenCandidates(String currentToken, Set<String> attemptedTokens);
+    }
+
+    @FunctionalInterface
+    public interface LegacyAuthTokenResolver {
         List<String> resolveTokenCandidates(String currentToken);
     }
 
@@ -48,7 +53,7 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
     private final SleepStrategy sleepStrategy;
 
     public HttpJunitLlmBackendClient(String backendUrl, String authToken) {
-        this(backendUrl, authToken, currentToken -> List.of(currentToken));
+        this(backendUrl, authToken, (currentToken, attemptedTokens) -> List.of(currentToken));
     }
 
     public HttpJunitLlmBackendClient(
@@ -66,6 +71,18 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
         );
     }
 
+    public HttpJunitLlmBackendClient(
+            String backendUrl,
+            String authToken,
+            LegacyAuthTokenResolver authTokenResolver
+    ) {
+        this(
+                backendUrl,
+                authToken,
+                (currentToken, attemptedTokens) -> authTokenResolver.resolveTokenCandidates(currentToken)
+        );
+    }
+
     HttpJunitLlmBackendClient(
             CurlHttpClient curlHttpClient,
             ObjectMapper objectMapper,
@@ -79,7 +96,7 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
                 backendUrl,
                 authToken,
                 sleepStrategy,
-                currentToken -> List.of(currentToken)
+                (currentToken, attemptedTokens) -> List.of(currentToken)
         );
     }
 
@@ -221,7 +238,10 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
             String currentToken,
             Set<String> attemptedTokens
     ) {
-        List<String> resolvedCandidates = authTokenResolver.resolveTokenCandidates(currentToken);
+        List<String> resolvedCandidates = authTokenResolver.resolveTokenCandidates(
+                currentToken,
+                Set.copyOf(attemptedTokens)
+        );
         if (resolvedCandidates == null || resolvedCandidates.isEmpty()) {
             return null;
         }

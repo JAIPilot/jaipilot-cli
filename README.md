@@ -81,6 +81,8 @@ jaipilot login
 3. the token saved by `jaipilot login <jaipilot-auth-token>`.
 
 If no auth is available, `jaipilot generate ...` automatically starts the same browser login flow as `jaipilot login`.
+If the backend returns `Unauthorized` and no other untried token source is available, `jaipilot generate ...` also
+triggers a one-time browser login retry in local interactive runs (disabled in CI/GitHub Actions).
 
 ## Action Publishing
 
