@@ -351,6 +351,7 @@ public final class HttpJunitLlmBackendClient implements JunitLlmBackendClient {
         putString(root, "initialTestClassCode", request.initialTestClassCode());
         putString(root, "newTestClassCode", request.newTestClassCode());
         putNullableString(root, "clientLogs", request.clientLogs());
+        putOptionalString(root, "localRepositoryPath", request.localRepositoryPath());
         return objectMapper.writeValueAsString(root);
     }
 

@@ -7,6 +7,7 @@ public record InvokeJunitLlmRequest(
         String cutCode,
         String initialTestClassCode,
         String newTestClassCode,
-        String clientLogs
+        String clientLogs,
+        String localRepositoryPath
 ) {
 }

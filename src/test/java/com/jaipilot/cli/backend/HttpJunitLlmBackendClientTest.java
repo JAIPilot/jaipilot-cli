@@ -58,7 +58,8 @@ class HttpJunitLlmBackendClientTest {
                 "class body",
                 "",
                 "",
-                null
+                null,
+                "/tmp/local-repo"
         ));
 
         assertEquals("job-1", response.jobId());
@@ -73,6 +74,7 @@ class HttpJunitLlmBackendClientTest {
         assertTrue(requestBody.get().contains("\"initialTestClassCode\":\"\""));
         assertTrue(requestBody.get().contains("\"newTestClassCode\":\"\""));
         assertTrue(requestBody.get().contains("\"clientLogs\":null"));
+        assertTrue(requestBody.get().contains("\"localRepositoryPath\":\"/tmp/local-repo\""));
         assertFalse(requestBody.get().contains("\"testClassName\""));
         assertFalse(requestBody.get().contains("\"contextClasses\""));
         assertFalse(requestBody.get().contains("\"cachedContextClasses\""));
@@ -306,7 +308,8 @@ class HttpJunitLlmBackendClientTest {
                 "class body",
                 "",
                 "",
-                null
+                null,
+                "/tmp/local-repo"
         );
     }
 }

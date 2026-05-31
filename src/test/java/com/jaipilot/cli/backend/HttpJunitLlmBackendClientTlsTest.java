@@ -34,7 +34,8 @@ class HttpJunitLlmBackendClientTlsTest {
                 "class body",
                 "",
                 "",
-                null
+                null,
+                "/tmp/local-repo"
         );
     }
 }

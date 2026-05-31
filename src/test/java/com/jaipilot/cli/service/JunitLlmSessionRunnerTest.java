@@ -76,6 +76,10 @@ class JunitLlmSessionRunnerTest {
                 "src/main/java/com/example/CrashController.java",
                 backendClient.requests.get(0).cutName()
         );
+        assertEquals(
+                tempDir.toAbsolutePath().normalize().toString(),
+                backendClient.requests.get(0).localRepositoryPath()
+        );
         assertEquals(null, backendClient.requests.get(0).testFilePath());
         assertEquals(
                 "package com.example;\n\nclass CrashControllerTest {\n}\n",

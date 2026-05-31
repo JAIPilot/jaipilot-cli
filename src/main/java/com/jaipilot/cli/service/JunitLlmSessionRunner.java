@@ -139,6 +139,7 @@ public final class JunitLlmSessionRunner {
     public JunitLlmSessionResult run(JunitLlmSessionRequest sessionRequest) throws Exception {
         String cutCode = fileService.readFile(sessionRequest.cutPath());
         String cutName = buildCutPathForBackend(sessionRequest.projectRoot(), sessionRequest.cutPath());
+        String localRepositoryPath = buildLocalRepositoryPathForBackend(sessionRequest.projectRoot());
 
         String currentSessionId = blankToNull(sessionRequest.sessionId());
         String currentTestFilePath = blankToNull(sessionRequest.testFilePath());
@@ -156,7 +157,8 @@ public final class JunitLlmSessionRunner {
                     cutCode,
                     normalizeText(sessionRequest.initialTestClassCode()),
                     currentTestCode,
-                    clientLogs
+                    clientLogs,
+                    localRepositoryPath
             );
             currentSessionId = invocationAndPollResult.sessionId();
             FetchJobResponse fetchJobResponse = invocationAndPollResult.fetchJobResponse();
@@ -243,7 +245,8 @@ public final class JunitLlmSessionRunner {
             String cutCode,
             String initialTestClassCode,
             String currentTestCode,
-            String clientLogs
+            String clientLogs,
+            String localRepositoryPath
     ) throws Exception {
         String sessionId = currentSessionId;
         long backoffMillis = initialPollRecoveryBackoffMillis;
@@ -256,7 +259,8 @@ public final class JunitLlmSessionRunner {
                         cutCode,
                         normalizeText(initialTestClassCode),
                         normalizeText(currentTestCode),
-                        clientLogs
+                        clientLogs,
+                        localRepositoryPath
                 );
                 InvokeJunitLlmResponse invokeResponse = backendClient.invoke(invokeRequest);
                 sessionId = firstNonBlank(invokeResponse.sessionId(), sessionId);
@@ -417,6 +421,10 @@ public final class JunitLlmSessionRunner {
                     .replace('\\', '/');
         }
         return normalizedCutPath.getFileName().toString();
+    }
+
+    private String buildLocalRepositoryPathForBackend(Path projectRoot) {
+        return projectRoot.toAbsolutePath().normalize().toString();
     }
 
     private String mergeSessionId(String currentSessionId, FetchJobResponse response) {
