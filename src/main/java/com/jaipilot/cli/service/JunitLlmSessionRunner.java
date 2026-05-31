@@ -164,6 +164,10 @@ public final class JunitLlmSessionRunner {
             FetchJobResponse fetchJobResponse = invocationAndPollResult.fetchJobResponse();
 
             FetchJobResponse.FetchJobOutput output = requireOutput(fetchJobResponse);
+            String statusMessage = blankToNull(output.statusMessage());
+            if (statusMessage != null) {
+                consoleLogger.announceStatusMessage(statusMessage);
+            }
             String coverageSummaryText = normalizeCoverageSummaryText(output.coverageSummary());
             if (coverageSummaryText != null && !coverageSummaryText.equals(lastCoverageSummaryText)) {
                 // Temporarily disabled coverage summary printing.
@@ -205,7 +209,6 @@ public final class JunitLlmSessionRunner {
             clientLogs = null;
 
             if (currentTestCode == null || currentTestCode.isBlank()) {
-                String statusMessage = blankToNull(output.statusMessage());
                 if (statusMessage != null) {
                     throw new IllegalStateException(statusMessage);
                 }
@@ -700,6 +703,13 @@ public final class JunitLlmSessionRunner {
                     info("  " + line);
                 }
             }
+        }
+
+        public void announceStatusMessage(String statusMessage) {
+            if (statusMessage == null || statusMessage.isBlank()) {
+                return;
+            }
+            info("statusMessage: " + statusMessage);
         }
 
         public void error(String message) {

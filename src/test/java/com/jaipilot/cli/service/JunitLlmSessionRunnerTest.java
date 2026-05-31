@@ -559,6 +559,54 @@ class JunitLlmSessionRunnerTest {
     }
 
     @Test
+    void runLogsBackendStatusMessageWhenFinalTestFileIsReturned() throws Exception {
+        Path cutPath = write(
+                "src/main/java/com/example/StatusController.java",
+                """
+                package com.example;
+
+                public class StatusController {
+                }
+                """
+        );
+        String statusMessage = "Mandatory precheck failed: initial compile check failed. Please fix build errors and retry test generation.";
+        StringWriter output = new StringWriter();
+        StubBackendClient backendClient = new StubBackendClient(
+                new FetchJobResponse(
+                        "done",
+                        new FetchJobResponse.FetchJobOutput(
+                                "session-1",
+                                "src/test/java/com/example/StatusControllerTest.java",
+                                "package com.example;\n\nclass StatusControllerTest {\n}\n",
+                                statusMessage,
+                                List.of(),
+                                null
+                        ),
+                        null,
+                        null
+                )
+        );
+
+        JunitLlmSessionRunner runner = new JunitLlmSessionRunner(
+                backendClient,
+                new ProjectFileService(),
+                new JunitLlmSessionRunner.ConsoleLogger(new PrintWriter(output, true))
+        );
+
+        runner.run(new JunitLlmSessionRequest(
+                tempDir,
+                cutPath,
+                null,
+                null,
+                "",
+                "",
+                null
+        ));
+
+        assertTrue(output.toString().contains("statusMessage: " + statusMessage));
+    }
+
+    @Test
     void consoleLoggerAnnouncesColoredDiffOnce() {
         StringWriter output = new StringWriter();
         JunitLlmSessionRunner.ConsoleLogger logger = new JunitLlmSessionRunner.ConsoleLogger(
