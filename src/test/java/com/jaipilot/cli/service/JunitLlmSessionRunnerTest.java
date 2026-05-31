@@ -11,6 +11,7 @@ import java.io.StringWriter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -573,6 +574,32 @@ class JunitLlmSessionRunnerTest {
         assertTrue(text.contains("\u001B[32m"));
         assertTrue(text.contains("+ class NewTest {"));
         assertFalse(text.contains("No file changes."));
+    }
+
+    @Test
+    void consoleLoggerFormatsLongDurationAsHumanReadableTime() {
+        StringWriter output = new StringWriter();
+        JunitLlmSessionRunner.ConsoleLogger logger = new JunitLlmSessionRunner.ConsoleLogger(
+                new PrintWriter(output, true)
+        );
+
+        logger.announceTotalTime(Duration.ofMillis(1_471_500));
+
+        String text = output.toString();
+        assertTrue(text.contains("Total time: 24m 32s"));
+    }
+
+    @Test
+    void consoleLoggerFormatsDurationWithHoursAndDaysWhenNeeded() {
+        StringWriter output = new StringWriter();
+        JunitLlmSessionRunner.ConsoleLogger logger = new JunitLlmSessionRunner.ConsoleLogger(
+                new PrintWriter(output, true)
+        );
+
+        logger.announceTotalTime(Duration.ofHours(27).plusMinutes(1).plusSeconds(5));
+
+        String text = output.toString();
+        assertTrue(text.contains("Total time: 1d 3h 1m 5s"));
     }
 
     private JunitLlmSessionRunner retryRunner(

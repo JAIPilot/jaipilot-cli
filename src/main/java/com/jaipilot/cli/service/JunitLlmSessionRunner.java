@@ -720,7 +720,28 @@ public final class JunitLlmSessionRunner {
             if (totalMillis < 1_000) {
                 return totalMillis + "ms";
             }
-            return String.format("%.1fs", totalMillis / 1_000.0);
+            if (totalMillis < 60_000) {
+                return String.format("%.1fs", totalMillis / 1_000.0);
+            }
+
+            long totalSeconds = Math.round(totalMillis / 1_000.0);
+            long days = totalSeconds / 86_400;
+            long remainder = totalSeconds % 86_400;
+            long hours = remainder / 3_600;
+            remainder %= 3_600;
+            long minutes = remainder / 60;
+            long seconds = remainder % 60;
+
+            List<String> parts = new ArrayList<>();
+            if (days > 0) {
+                parts.add(days + "d");
+            }
+            if (hours > 0 || !parts.isEmpty()) {
+                parts.add(hours + "h");
+            }
+            parts.add(minutes + "m");
+            parts.add(seconds + "s");
+            return String.join(" ", parts);
         }
 
         private String colorize(String color, String message) {
