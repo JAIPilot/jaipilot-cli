@@ -6,7 +6,6 @@ import com.jaipilot.cli.auth.CredentialsStore;
 import com.jaipilot.cli.backend.HttpJunitLlmBackendClient;
 import com.jaipilot.cli.backend.JunitLlmBackendClient;
 import com.jaipilot.cli.model.JunitLlmSessionRequest;
-import com.jaipilot.cli.model.JunitLlmSessionResult;
 import com.jaipilot.cli.service.JunitLlmSessionRunner;
 import com.jaipilot.cli.service.ProjectFileService;
 import com.jaipilot.cli.util.JaipilotAuthTokenStore;
@@ -73,7 +72,7 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
                     fileService,
                     consoleLogger
             );
-            JunitLlmSessionResult result = sessionRunner.run(new JunitLlmSessionRequest(
+            sessionRunner.run(new JunitLlmSessionRequest(
                     normalizedProjectRoot,
                     resolvedCutPath,
                     null,
@@ -83,8 +82,6 @@ abstract class BaseJunitLlmCommand implements Callable<Integer> {
                     null
             ));
 
-            consoleLogger.announceTestFile(result.outputPath());
-            consoleLogger.announceTestFileDiff(result.previousOutputContent(), result.currentOutputContent());
             consoleLogger.announceTotalTime(Duration.between(startedAt, Instant.now()));
             return CommandLine.ExitCode.OK;
         } catch (CommandLine.ParameterException exception) {
