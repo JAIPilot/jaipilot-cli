@@ -14,8 +14,6 @@
     </a>
   </p>
   <p>
-    <a href="#quick-start"><strong>Quick Start</strong></a>
-    ·
     <a href="#how-it-works"><strong>How It Works</strong></a>
   </p>
 </div>
@@ -23,48 +21,6 @@
 <p align="center">
   This repository is focused on the JAIPilot GitHub App for PR automation.
 </p>
-
-<hr />
-
-JAIPilot generates high-quality tests for changed Java production classes in pull requests and pushes the generated changes back to the PR branch.
-
-## Why This App
-
-- Generates and updates tests for changed Java production classes in a PR
-- Commits generated tests back to the PR branch automatically
-- Supports Maven and Gradle repositories
-- Exposes processed and failed class counts as workflow outputs
-
-## Prerequisites
-
-1. Install the JAIPilot GitHub App on the target repository.
-2. Ensure the app has repository permissions for:
-   - `Contents: Read and write`
-   - `Pull requests: Read and write`
-   - `Metadata: Read-only`
-3. Ensure the backend endpoints are deployed (JAIPilot cloud or self-hosted in `jaipilot-functions`):
-   - `POST /functions/v1/github-app-webhook`
-   - `POST /functions/v1/github-actions-token`
-
-## Quick Start
-
-1. Deploy JAIPilot backend endpoints (`github-app-webhook` and `github-actions-token`).
-2. Install the app on a repository.
-3. The app automatically creates or updates `.github/workflows/jaipilot-generate.yml`.
-4. On every PR (`opened`, `synchronize`, `reopened`), the managed workflow:
-   - requests a GitHub OIDC token (`id-token: write`)
-   - exchanges it with `POST /functions/v1/github-actions-token` for a short-lived JAIPilot runtime token
-   - runs `JAIPilot/jaipilot-cli@action-v1` with `jaipilot-auth-token`
-
-## How It Works
-
-- Resolves JAIPilot auth by preferring GitHub OIDC runtime token exchange when `id-token: write` is available; falls back to `jaipilot-auth-token` / `JAIPILOT_AUTH_TOKEN`.
-- Detects changed files from PR base branch (or previous commit for push events).
-- Filters to non-test `.java` production classes only.
-- Generates tests for each changed class.
-- Prints backend-provided coverage summaries in `jaipilot generate` logs when available.
-- Commits and pushes generated tests to the same branch.
-- Optionally fails the job when generation errors occur.
 
 ## Local CLI Install
 
@@ -79,6 +35,38 @@ The installer places `jaipilot` in `~/.local/bin`. Ensure that directory is on y
 ```bash
 jaipilot --version
 ```
+
+<hr />
+
+JAIPilot generates high-quality tests for changed Java production classes in pull requests and pushes the generated changes back to the PR branch.
+
+## Why This App
+
+- Generates and updates tests for changed Java production classes in a PR
+- Commits generated tests back to the PR branch automatically
+- Supports Maven and Gradle repositories
+- Exposes processed and failed class counts as workflow outputs
+
+## Install as GitHub App
+
+1. Install the JAIPilot GitHub App on the target repository.
+2. Ensure the app has repository permissions for:
+   - `Contents: Read and write`
+   - `Pull requests: Read and write`
+   - `Metadata: Read-only`
+3. Ensure the backend endpoints are deployed (JAIPilot cloud or self-hosted in `jaipilot-functions`):
+   - `POST /functions/v1/github-app-webhook`
+   - `POST /functions/v1/github-actions-token`
+
+## How It Works
+
+- Resolves JAIPilot auth by preferring GitHub OIDC runtime token exchange when `id-token: write` is available; falls back to `jaipilot-auth-token` / `JAIPILOT_AUTH_TOKEN`.
+- Detects changed files from PR base branch (or previous commit for push events).
+- Filters to non-test `.java` production classes only.
+- Generates tests for each changed class.
+- Prints backend-provided coverage summaries in `jaipilot generate` logs when available.
+- Commits and pushes generated tests to the same branch.
+- Optionally fails the job when generation errors occur.
 
 ## Local CLI Auth
 
@@ -97,10 +85,6 @@ jaipilot login
 If no auth is available, `jaipilot generate ...` automatically starts the same browser login flow as `jaipilot login`.
 If the backend returns `Unauthorized` and no other untried token source is available, `jaipilot generate ...` also
 triggers a one-time browser login retry in local interactive runs (disabled in CI/GitHub Actions).
-
-## Action Publishing
-
-See [docs/github-action-publishing.md](docs/github-action-publishing.md) for release tagging and publishing flow.
 
 ## License
 
