@@ -66,6 +66,20 @@ JAIPilot generates high-quality tests for changed Java production classes in pul
 - Commits and pushes generated tests to the same branch.
 - Optionally fails the job when generation errors occur.
 
+## Local CLI Install
+
+Install the latest JAIPilot CLI release with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JAIPilot/jaipilot-cli/action-v1/install.sh | sh
+```
+
+The installer places `jaipilot` in `~/.local/bin`. Ensure that directory is on your `PATH`, then verify the install:
+
+```bash
+jaipilot --version
+```
+
 ## Local CLI Auth
 
 For local CLI runs, sign in once with browser auth flow:
