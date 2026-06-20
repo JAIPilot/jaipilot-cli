@@ -1,3 +1,4 @@
+# managed-by: jaipilot-github-app
 name: JAIPilot Generate
 
 on:
@@ -10,6 +11,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  id-token: write
 
 concurrency:
   group: jaipilot-generate-${{ github.event.pull_request.number }}
@@ -19,7 +21,6 @@ jobs:
   generate-tests:
     if: ${{ github.actor != 'github-actions[bot]' && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v4
@@ -27,7 +28,60 @@ jobs:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
 
+      - name: Exchange GitHub OIDC token for JAIPilot runtime token
+        id: jaipilot-auth
+        shell: bash
+        env:
+          JAIPILOT_TOKEN_ENDPOINT: https://otxfylhjrlaesjagfhfi.supabase.co/functions/v1/github-actions-token
+        run: |
+          set -euo pipefail
+
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "jq is required but missing on the runner." >&2
+            exit 1
+          fi
+
+          oidc_response="$(curl -fsSL \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=jaipilot-github-app")"
+          github_oidc_token="$(echo "$oidc_response" | jq -r '.value')"
+
+          if [ -z "$github_oidc_token" ] || [ "$github_oidc_token" = "null" ]; then
+            echo "Failed to obtain GitHub OIDC token." >&2
+            echo "Response: $oidc_response" >&2
+            exit 1
+          fi
+
+          exchange_payload="$(jq -cn \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg repository_id "${GITHUB_REPOSITORY_ID}" \
+            --arg repository_owner "${GITHUB_REPOSITORY_OWNER}" \
+            --arg run_id "${GITHUB_RUN_ID}" \
+            --arg run_attempt "${GITHUB_RUN_ATTEMPT}" \
+            --arg actor "${GITHUB_ACTOR}" \
+            '{repository: $repository, repository_id: $repository_id, repository_owner: $repository_owner, run_id: $run_id, run_attempt: $run_attempt, actor: $actor}')"
+
+          token_response="$(curl -fsSL -X POST "$JAIPILOT_TOKEN_ENDPOINT" \
+            -H "Authorization: Bearer ${github_oidc_token}" \
+            -H "Content-Type: application/json" \
+            -d "$exchange_payload")"
+
+          jaipilot_token="$(echo "$token_response" | jq -r '.jaipilot_token')"
+          expires_at="$(echo "$token_response" | jq -r '.expires_at')"
+
+          if [ -z "$jaipilot_token" ] || [ "$jaipilot_token" = "null" ]; then
+            echo "Token exchange failed." >&2
+            echo "Response: $token_response" >&2
+            exit 1
+          fi
+
+          echo "::add-mask::$jaipilot_token"
+          echo "jaipilot_token=$jaipilot_token" >> "$GITHUB_OUTPUT"
+          echo "jaipilot_token_expires_at=$expires_at" >> "$GITHUB_OUTPUT"
+
       - name: Run JAIPilot generate and push changes
-        uses: ./
+        uses: JAIPilot/jaipilot-cli@action-v1
+        env:
+          JAIPILOT_BACKEND_URL: https://otxfylhjrlaesjagfhfi.supabase.co
         with:
-          jaipilot-license-key: ${{ secrets.JAIPILOT_LICENSE_KEY }}
+          jaipilot-auth-token: ${{ steps.jaipilot-auth.outputs.jaipilot_token }}
