@@ -1,7 +1,12 @@
 package com.jaipilot.cli;
 
+import com.jaipilot.cli.commands.DoctorCommand;
 import com.jaipilot.cli.commands.GenerateCommand;
-import com.jaipilot.cli.commands.LoginCommand;
+import com.jaipilot.cli.commands.StatusCommand;
+import com.jaipilot.cli.service.CoverageReportService;
+import com.jaipilot.cli.service.InteractiveShell;
+import com.jaipilot.cli.service.JavaProjectService;
+import com.jaipilot.cli.service.ProjectFileService;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -12,10 +17,11 @@ import picocli.CommandLine.Model.CommandSpec;
         name = "jaipilot",
         mixinStandardHelpOptions = true,
         versionProvider = JaiPilotVersionProvider.class,
-        description = "Runs backend-assisted JUnit generation workflows.",
+        description = "Generate Java unit tests locally with coding agents.",
         subcommands = {
             GenerateCommand.class,
-            LoginCommand.class
+            StatusCommand.class,
+            DoctorCommand.class
         }
 )
 public final class JaiPilotCli implements Callable<Integer> {
@@ -30,6 +36,12 @@ public final class JaiPilotCli implements Callable<Integer> {
 
     @Override
     public Integer call() {
+        if (System.console() != null) {
+            InteractiveShell shell = new InteractiveShell(
+                    new JavaProjectService(new ProjectFileService(), new CoverageReportService())
+            );
+            return shell.run(spec.commandLine().getOut(), spec.commandLine().getErr());
+        }
         spec.commandLine().usage(spec.commandLine().getOut());
         return CommandLine.ExitCode.OK;
     }

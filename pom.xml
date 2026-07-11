@@ -10,7 +10,7 @@
     <packaging>jar</packaging>
 
     <name>JAIPilot CLI</name>
-    <description>Java CLI for backend-assisted JUnit generation with local Maven/Gradle validation, designed as a test safety harness for AI coding agents.</description>
+    <description>Java CLI for local Codex-driven JUnit generation with JaCoCo validation and coverage reporting.</description>
     <url>https://github.com/JAIPilot/jaipilot-cli</url>
 
     <licenses>
@@ -32,7 +32,6 @@
         <revision>0.3.42</revision>
         <maven.compiler.release>17</maven.compiler.release>
         <picocli.version>4.7.7</picocli.version>
-        <bouncycastle.version>1.78.1</bouncycastle.version>
         <junit.version>5.11.4</junit.version>
         <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
         <maven.surefire.plugin.version>3.5.2</maven.surefire.plugin.version>
@@ -62,12 +61,6 @@
             <scope>test</scope>
         </dependency>
 
-        <dependency>
-            <groupId>org.bouncycastle</groupId>
-            <artifactId>bcpkix-jdk18on</artifactId>
-            <version>${bouncycastle.version}</version>
-            <scope>test</scope>
-        </dependency>
     </dependencies>
 
     <build>

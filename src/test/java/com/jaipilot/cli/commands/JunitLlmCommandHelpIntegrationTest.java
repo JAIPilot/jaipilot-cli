@@ -16,6 +16,8 @@ class JunitLlmCommandHelpIntegrationTest {
     void generateHelpShowsNoCustomCommandOptions() {
         String helpOutput = executeHelp("generate");
 
+        assertTrue(helpOutput.contains("--changed"));
+        assertTrue(helpOutput.contains("--coverage-below"));
         assertFalse(helpOutput.contains("--output"));
         assertFalse(helpOutput.contains("--build-executable"));
         assertFalse(helpOutput.contains("--build-arg"));
@@ -39,7 +41,7 @@ class JunitLlmCommandHelpIntegrationTest {
     }
 
     @Test
-    void rootHelpListsGenerateAndLoginCommands() {
+    void rootHelpListsGenerateAndDoctorCommands() {
         StringWriter outBuffer = new StringWriter();
         CommandLine commandLine = new CommandLine(new JaiPilotCli())
                 .setOut(new PrintWriter(outBuffer, true))
@@ -49,12 +51,9 @@ class JunitLlmCommandHelpIntegrationTest {
 
         assertEquals(0, exitCode);
         assertTrue(outBuffer.toString().contains("generate"));
-        assertTrue(outBuffer.toString().contains("login"));
-        assertFalse(outBuffer.toString().contains("logout"));
-        assertFalse(outBuffer.toString().contains("status"));
-        assertFalse(outBuffer.toString().contains("update"));
-        assertFalse(outBuffer.toString().contains("verify"));
-        assertFalse(outBuffer.toString().contains("fix"));
+        assertTrue(outBuffer.toString().contains("doctor"));
+        assertTrue(outBuffer.toString().contains("status"));
+        assertFalse(outBuffer.toString().contains("login"));
     }
 
     private String executeHelp(String command) {

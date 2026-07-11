@@ -94,8 +94,7 @@ resolve_latest_version() {
     return
   fi
 
-  # Fallback: select the newest semantic-version release tag (v<digits>[.<digits>]...),
-  # ignoring action-channel tags like action-v1.
+  # Fallback: select the newest semantic-version release tag (v<digits>[.<digits>]...).
   releases_json=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100")
   version=$(printf '%s\n' "$releases_json" \
     | tr ',' '\n' \

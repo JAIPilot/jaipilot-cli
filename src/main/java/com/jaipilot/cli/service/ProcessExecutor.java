@@ -21,11 +21,23 @@ public final class ProcessExecutor {
             boolean verbose,
             PrintWriter verboseWriter
     ) throws IOException, InterruptedException {
+        return execute(command, workingDirectory, timeout, verbose, verboseWriter, null);
+    }
+
+    public ExecutionResult execute(
+            List<String> command,
+            Path workingDirectory,
+            Duration timeout,
+            boolean verbose,
+            PrintWriter verboseWriter,
+            String stdinText
+    ) throws IOException, InterruptedException {
         ProcessBuilder processBuilder = new ProcessBuilder(command)
                 .directory(workingDirectory.toFile())
                 .redirectErrorStream(true);
 
         Process process = processBuilder.start();
+        writeInput(process, stdinText);
         StringBuilder output = new StringBuilder();
         Thread readerThread = new Thread(() -> readOutput(process, output, verbose, verboseWriter), "jaipilot-process-reader");
         readerThread.setDaemon(true);
@@ -41,6 +53,14 @@ public final class ProcessExecutor {
         return new ExecutionResult(command, exitCode, !finished, output.toString());
     }
 
+    private void writeInput(Process process, String stdinText) throws IOException {
+        try (var writer = process.outputWriter(StandardCharsets.UTF_8)) {
+            if (stdinText != null && !stdinText.isBlank()) {
+                writer.write(stdinText);
+            }
+        }
+    }
+
     private boolean waitForProcess(Process process, Duration timeout, PrintWriter progressWriter) throws InterruptedException {
         long timeoutMillis = timeout.toMillis();
         long elapsedMillis = 0L;
@@ -50,7 +70,7 @@ public final class ProcessExecutor {
                 return true;
             }
             elapsedMillis += waitMillis;
-            progressWriter.println("PROGRESS: Build is still running (" + TimeUnit.MILLISECONDS.toSeconds(elapsedMillis)
+            progressWriter.println("PROGRESS: Command is still running (" + TimeUnit.MILLISECONDS.toSeconds(elapsedMillis)
                     + "s elapsed)");
             progressWriter.flush();
         }

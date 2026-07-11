@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/assets/jaipilot-logo.svg" alt="JAIPilot logo" width="160" />
-  <h1>JAIPilot GitHub App</h1>
-  <p><strong>Automatically generate high-coverage Java unit tests on every pull request.</strong></p>
+  <h1>JAIPilot CLI</h1>
+  <p><strong>Generate Java unit tests locally with Codex and track JaCoCo coverage from the terminal.</strong></p>
   <p>
     <a href="https://github.com/JAIPilot/jaipilot-cli/actions/workflows/ci.yml">
       <img src="https://github.com/JAIPilot/jaipilot-cli/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI">
@@ -13,66 +13,131 @@
       <img src="https://img.shields.io/github/license/JAIPilot/jaipilot-cli" alt="License">
     </a>
   </p>
-  <p>
-    <a href="#how-it-works"><strong>How It Works</strong></a>
-  </p>
 </div>
 
-<p align="center">
-  This repository is focused on the JAIPilot GitHub App for PR automation.
-</p>
+`jaipilot-cli` is a Java-only local workflow. It does not call a JAIPilot backend, Supabase, or any custom service. Test generation comes from the coding agent you already use, starting with `codex`.
 
-## Local CLI Install
+## Features
 
-Install the latest JAIPilot CLI release with:
+- Interactive shell with `/generate`, `/status`, and `/doctor`
+- Java class targeting by path, fully qualified name, or simple unique class name
+- Batch generation for uncommitted classes
+- Batch generation for classes below a coverage threshold
+- JaCoCo-based status reporting with a default threshold of `80%`
+- Before/after coverage summaries for each run
+- Per-class and total agent token usage
+- Optional estimated cost reporting from local pricing env vars
+
+## Prerequisites
+
+- Java 17+
+- Maven or Gradle project
+- JaCoCo configured in the project build
+- `codex` installed and already authenticated locally
+
+## Install
+
+Install the latest published CLI:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JAIPilot/jaipilot-cli/action-v1/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/JAIPilot/jaipilot-cli/main/install.sh | sh
 ```
 
-The installer places `jaipilot` in `~/.local/bin`. Ensure that directory is on your `PATH`, then verify the install:
+Then verify:
 
 ```bash
 jaipilot --version
 ```
 
-Run the CLI against a class with:
+## Usage
 
-```bash
-jaipilot generate <class to create unit test for>
+Run bare `jaipilot` to open the interactive shell:
+
+```text
+JAIPilot
+Project: /path/to/repo
+Build: maven
+Agent: codex
+
+Commands:
+  /generate <class>
+  /generate all changed
+  /generate all uncommitted
+  /generate all coverage 80
+  /generate all for 80% coverage
+  /status
+  /doctor
+  /help
+  /exit
 ```
 
-<hr />
+Direct commands:
 
-JAIPilot generates high-quality tests for changed Java production classes in pull requests and pushes the generated changes back to the PR branch.
+```bash
+jaipilot generate src/main/java/com/acme/OrderService.java
+jaipilot generate com.acme.OrderService
+jaipilot generate --changed
+jaipilot generate --coverage-below
+jaipilot generate --coverage-below 80
+jaipilot status
+jaipilot status --threshold 90
+jaipilot doctor
+```
 
-## Why This App
+## What `status` Shows
 
-- Generates and updates tests for changed Java production classes in a PR
-- Commits generated tests back to the PR branch automatically
-- Supports Maven and Gradle repositories
-- Exposes processed and failed class counts as workflow outputs
+`jaipilot status` reads the current JaCoCo XML report and prints:
 
-## Install as GitHub App
+- project root and JaCoCo report path
+- total line and branch coverage
+- classes below the threshold
+- whether each class already has a corresponding test file
 
-1. Install the JAIPilot GitHub App on the target repository.
-2. Ensure the app has repository permissions for:
-   - `Contents: Read and write`
-   - `Pull requests: Read and write`
-   - `Metadata: Read-only`
-3. Ensure the backend endpoints are deployed (JAIPilot cloud or self-hosted in `jaipilot-functions`):
-   - `POST /functions/v1/github-app-webhook`
-   - `POST /functions/v1/github-actions-token`
+The default threshold is `80%`.
+
+## What `generate` Shows
+
+Each generation run prints:
+
+- the classes being processed
+- current test state (`test-present` or `test-missing`)
+- Codex usage per class
+- optional estimated cost per class
+- JaCoCo coverage delta for the class when available
+- a final run summary with total usage and overall project coverage improvement
+
+## Cost Reporting
+
+Codex CLI exposes token usage, not portable billing. JAIPilot therefore reports exact usage and can optionally estimate cost if you provide pricing locally:
+
+```bash
+export JAIPILOT_CODEX_INPUT_COST_PER_MILLION_USD=1.25
+export JAIPILOT_CODEX_CACHED_INPUT_COST_PER_MILLION_USD=0.125
+export JAIPILOT_CODEX_OUTPUT_COST_PER_MILLION_USD=10
+export JAIPILOT_CODEX_REASONING_OUTPUT_COST_PER_MILLION_USD=10
+```
+
+If these are not set, JAIPilot marks estimated cost as unavailable and still reports token usage.
+
+## Codex Memory Files
+
+JAIPilot keeps the local workflow explicit so Codex does not need to rediscover conventions on every run:
+
+- `AGENTS.md`
+  Stable repo rules and constraints.
+- `.jaipilot/project-memory.md`
+  Evolving project facts such as build, coverage, and test conventions.
+- `.agents/skills/jaipilot-generate/SKILL.md`
+  Reusable instructions for the JAIPilot generation workflow.
 
 ## How It Works
 
-- Resolves JAIPilot auth by preferring GitHub OIDC runtime token exchange when `id-token: write` is available; falls back to `jaipilot-auth-token` / `JAIPILOT_AUTH_TOKEN`.
-- Detects changed files from PR base branch (or previous commit for push events).
-- Filters to non-test `.java` production classes only.
-- Generates tests for each changed class.
-- Prints backend-provided coverage summaries in `jaipilot generate` logs when available.
-- Commits and pushes generated tests to the same branch.
-- Optionally fails the job when generation errors occur.
+1. JAIPilot resolves one or more Java production classes from your input.
+2. It asks `codex` to create or update the corresponding JUnit test under `src/test/java`.
+3. It runs the module test command locally.
+4. If validation fails once, it asks Codex to repair the generated test.
+5. It runs JaCoCo coverage for the target class when available.
+6. It prints per-class and aggregate coverage and usage summaries.
 
 ## License
 
