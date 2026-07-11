@@ -2,6 +2,7 @@ package com.jaipilot.cli.service;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.StringReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -15,6 +16,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
 
 public final class CoverageReportService {
 
@@ -69,9 +71,14 @@ public final class CoverageReportService {
         try (InputStream inputStream = Files.newInputStream(reportPath)) {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            factory.setFeature("http://xml.org/sax/features/validation", false);
             factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
             factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
-            return factory.newDocumentBuilder().parse(inputStream);
+            var builder = factory.newDocumentBuilder();
+            // JaCoCo reports commonly declare report.dtd, but coverage parsing only needs the XML payload.
+            builder.setEntityResolver((publicId, systemId) -> new InputSource(new StringReader("")));
+            return builder.parse(inputStream);
         } catch (Exception exception) {
             throw new IllegalStateException("Failed to parse JaCoCo report " + reportPath, exception);
         }

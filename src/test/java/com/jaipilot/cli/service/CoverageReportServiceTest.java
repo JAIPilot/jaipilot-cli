@@ -21,6 +21,8 @@ class CoverageReportServiceTest {
         Path reportPath = projectRoot.resolve("target/site/jacoco/jacoco.xml");
         Files.createDirectories(reportPath.getParent());
         Files.writeString(reportPath, """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <!DOCTYPE report PUBLIC "-//JACOCO//DTD Report 1.1//EN" "report.dtd">
                 <report name="sample">
                   <package name="com/example">
                     <class name="com/example/OrderService">
