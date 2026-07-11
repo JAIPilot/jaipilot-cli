@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit;
 
 public final class ProcessExecutor {
 
-    private static final long HEARTBEAT_SECONDS = 5L;
+    private static final long HEARTBEAT_MILLIS = 200L;
 
     public ExecutionResult execute(
             List<String> command,
@@ -21,7 +21,7 @@ public final class ProcessExecutor {
             boolean verbose,
             PrintWriter verboseWriter
     ) throws IOException, InterruptedException {
-        return execute(command, workingDirectory, timeout, verbose, verboseWriter, null);
+        return execute(command, workingDirectory, timeout, verbose, verboseWriter, null, ProgressListener.noOp());
     }
 
     public ExecutionResult execute(
@@ -32,25 +32,43 @@ public final class ProcessExecutor {
             PrintWriter verboseWriter,
             String stdinText
     ) throws IOException, InterruptedException {
+        return execute(command, workingDirectory, timeout, verbose, verboseWriter, stdinText, ProgressListener.noOp());
+    }
+
+    public ExecutionResult execute(
+            List<String> command,
+            Path workingDirectory,
+            Duration timeout,
+            boolean verbose,
+            PrintWriter verboseWriter,
+            String stdinText,
+            ProgressListener progressListener
+    ) throws IOException, InterruptedException {
         ProcessBuilder processBuilder = new ProcessBuilder(command)
                 .directory(workingDirectory.toFile())
                 .redirectErrorStream(true);
 
         Process process = processBuilder.start();
+        ProgressListener listener = progressListener == null ? ProgressListener.noOp() : progressListener;
+        listener.onStart(command);
         writeInput(process, stdinText);
         StringBuilder output = new StringBuilder();
         Thread readerThread = new Thread(() -> readOutput(process, output, verbose, verboseWriter), "jaipilot-process-reader");
         readerThread.setDaemon(true);
         readerThread.start();
 
-        boolean finished = waitForProcess(process, timeout, verboseWriter);
+        WaitResult waitResult = waitForProcess(process, timeout, listener);
+        Duration elapsed = waitResult.elapsed();
+        boolean finished = waitResult.finished();
         if (!finished) {
             process.destroyForcibly();
         }
 
         readerThread.join(TimeUnit.SECONDS.toMillis(5));
         int exitCode = finished ? process.exitValue() : -1;
-        return new ExecutionResult(command, exitCode, !finished, output.toString());
+        ExecutionResult result = new ExecutionResult(command, exitCode, !finished, output.toString(), elapsed);
+        listener.onFinish(result, elapsed);
+        return result;
     }
 
     private void writeInput(Process process, String stdinText) throws IOException {
@@ -61,20 +79,23 @@ public final class ProcessExecutor {
         }
     }
 
-    private boolean waitForProcess(Process process, Duration timeout, PrintWriter progressWriter) throws InterruptedException {
+    private WaitResult waitForProcess(
+            Process process,
+            Duration timeout,
+            ProgressListener progressListener
+    ) throws InterruptedException {
         long timeoutMillis = timeout.toMillis();
         long elapsedMillis = 0L;
+        long startedAt = System.nanoTime();
         while (elapsedMillis < timeoutMillis) {
-            long waitMillis = Math.min(TimeUnit.SECONDS.toMillis(HEARTBEAT_SECONDS), timeoutMillis - elapsedMillis);
+            long waitMillis = Math.min(HEARTBEAT_MILLIS, timeoutMillis - elapsedMillis);
             if (process.waitFor(waitMillis, TimeUnit.MILLISECONDS)) {
-                return true;
+                return new WaitResult(true, Duration.ofNanos(System.nanoTime() - startedAt));
             }
             elapsedMillis += waitMillis;
-            progressWriter.println("PROGRESS: Command is still running (" + TimeUnit.MILLISECONDS.toSeconds(elapsedMillis)
-                    + "s elapsed)");
-            progressWriter.flush();
+            progressListener.onHeartbeat(Duration.ofMillis(elapsedMillis));
         }
-        return false;
+        return new WaitResult(false, Duration.ofNanos(System.nanoTime() - startedAt));
     }
 
     private static void readOutput(Process process, StringBuilder output, boolean verbose, PrintWriter verboseWriter) {
@@ -101,7 +122,34 @@ public final class ProcessExecutor {
             List<String> command,
             int exitCode,
             boolean timedOut,
-            String output
+            String output,
+            Duration elapsed
+    ) {
+    }
+
+    public interface ProgressListener {
+
+        default void onStart(List<String> command) {
+        }
+
+        default void onHeartbeat(Duration elapsed) {
+        }
+
+        default void onFinish(ExecutionResult result, Duration elapsed) {
+        }
+
+        static ProgressListener noOp() {
+            return NoOpProgressListener.INSTANCE;
+        }
+    }
+
+    private enum NoOpProgressListener implements ProgressListener {
+        INSTANCE
+    }
+
+    private record WaitResult(
+            boolean finished,
+            Duration elapsed
     ) {
     }
 }

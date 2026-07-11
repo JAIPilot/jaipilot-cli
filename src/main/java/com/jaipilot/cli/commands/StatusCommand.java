@@ -3,9 +3,11 @@ package com.jaipilot.cli.commands;
 import com.jaipilot.cli.service.CoverageReportService;
 import com.jaipilot.cli.service.JavaProjectService;
 import com.jaipilot.cli.service.ProjectFileService;
-import java.io.PrintWriter;
+import com.jaipilot.cli.ui.TerminalUi;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
@@ -52,48 +54,51 @@ public final class StatusCommand implements Callable<Integer> {
             throw new CommandLine.ParameterException(spec.commandLine(), "--threshold must be between 0 and 100.");
         }
 
-        PrintWriter out = spec.commandLine().getOut();
+        TerminalUi ui = new TerminalUi(spec.commandLine().getOut());
         Path projectRoot = projectService.resolveProjectRoot(Path.of("").toAbsolutePath().normalize());
         CoverageReportService.CoverageSnapshot snapshot = coverageReportService.readProjectSnapshot(projectRoot)
                 .orElseThrow(() -> new CommandLine.ParameterException(
                         spec.commandLine(),
                         "No JaCoCo XML report found under the current project."
                 ));
-
-        out.printf("Project root: %s%n", projectRoot);
-        out.printf("Coverage report: %s%n", snapshot.reportPath());
-        out.printf("Threshold: %.1f%%%n", threshold);
-        out.printf(
-                "Current totals: line %.1f%%, branch %.1f%%%n",
-                snapshot.totalLineCoverage(),
-                snapshot.totalBranchCoverage()
-        );
-
         List<JavaProjectService.JavaClassDescriptor> belowThreshold = projectService.findClassesBelowCoverage(
                 projectRoot,
                 threshold
         );
-        out.printf("Classes below threshold: %d%n", belowThreshold.size());
+
+        ui.printBanner("JaCoCo status and threshold tracking");
+        LinkedHashMap<String, String> metadata = new LinkedHashMap<>();
+        metadata.put("project", projectRoot.toString());
+        metadata.put("report", snapshot.reportPath().toString());
+        metadata.put("threshold", "%.1f%%".formatted(threshold));
+        metadata.put("below threshold", String.valueOf(belowThreshold.size()));
+        ui.printKeyValues(metadata);
+        ui.section("Totals");
+        ui.printCoverageMeter("line", snapshot.totalLineCoverage(), threshold);
+        ui.printCoverageMeter("branch", snapshot.totalBranchCoverage(), threshold);
+
         if (belowThreshold.isEmpty()) {
-            out.println("All Java production classes currently meet the threshold.");
+            ui.section("Threshold Result");
+            ui.success("All Java production classes currently meet the threshold.");
             return CommandLine.ExitCode.OK;
         }
 
-        out.println("Classes below threshold:");
+        ui.section("Classes Below Threshold");
+        List<List<String>> rows = new ArrayList<>();
         for (JavaProjectService.JavaClassDescriptor descriptor : belowThreshold) {
             CoverageReportService.ClassCoverage coverage = snapshot.classCoverageByName()
                     .get(descriptor.fullyQualifiedName());
-            String testStatus = Files.isRegularFile(descriptor.testPath()) ? "test-present" : "test-missing";
             double lineCoverage = coverage == null ? 0.0d : coverage.lineCoverage();
             double branchCoverage = coverage == null ? 0.0d : coverage.branchCoverage();
-            out.printf(
-                    "  - %s  line=%.1f%% branch=%.1f%% %s%n",
-                    descriptor.fullyQualifiedName(),
-                    lineCoverage,
-                    branchCoverage,
-                    testStatus
-            );
+            rows.add(List.of(
+                    ui.truncate(descriptor.fullyQualifiedName(), 56),
+                    ui.formatCoverage(lineCoverage, threshold),
+                    ui.formatCoverage(branchCoverage, threshold),
+                    ui.formatTestState(Files.isRegularFile(descriptor.testPath()))
+            ));
         }
+        ui.printTable(List.of("Class", "Line", "Branch", "Tests"), rows);
+        ui.info("Use `jaipilot generate --coverage-below %.0f` to target this set.".formatted(threshold));
         return CommandLine.ExitCode.OK;
     }
 }

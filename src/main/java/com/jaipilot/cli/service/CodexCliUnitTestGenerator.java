@@ -2,6 +2,7 @@ package com.jaipilot.cli.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jaipilot.cli.ui.TerminalUi;
 import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -78,7 +79,7 @@ public final class CodexCliUnitTestGenerator {
     public GenerationResult generate(
             JavaProjectService.JavaClassDescriptor descriptor,
             String model,
-            PrintWriter out
+            TerminalUi ui
     ) throws Exception {
         ensureCodexAvailable(descriptor.projectRoot());
         boolean testExistedBefore = Files.isRegularFile(descriptor.testPath());
@@ -86,38 +87,28 @@ public final class CodexCliUnitTestGenerator {
                 ? coverageReportService.readProjectSnapshot(descriptor.moduleRoot()).orElse(null)
                 : null;
 
-        AgentUsage initialUsage = runCodex(descriptor, model, buildInitialPrompt(descriptor), out);
+        AgentUsage initialUsage = runCodex(descriptor, model, buildInitialPrompt(descriptor), ui);
         if (!Files.isRegularFile(descriptor.testPath())) {
             throw new IllegalStateException("Expected generated test file was not created: " + descriptor.testPath());
         }
 
-        ProcessExecutor.ExecutionResult validationResult = validate(descriptor, out);
+        ProcessExecutor.ExecutionResult validationResult = validate(descriptor, ui);
         AgentUsage repairUsage = AgentUsage.zero();
         for (int attempt = 1; validationResult.exitCode() != 0 && attempt <= MAX_FIX_ATTEMPTS; attempt++) {
-            out.printf("Validation failed for %s. Asking Codex to repair the generated test.%n", descriptor.className());
-            repairUsage = repairUsage.plus(runCodex(descriptor, model, buildRepairPrompt(descriptor, validationResult.output()), out));
-            validationResult = validate(descriptor, out);
+            ui.warn("Validation failed for " + descriptor.className() + ". Requesting one repair pass from Codex.");
+            repairUsage = repairUsage.plus(runCodex(descriptor, model, buildRepairPrompt(descriptor, validationResult.output()), ui));
+            validationResult = validate(descriptor, ui);
         }
 
         if (validationResult.exitCode() != 0) {
             throw new IllegalStateException(
-                    "Validation failed for " + descriptor.testFullyQualifiedName() + ":\n" + validationResult.output()
+                    "Validation failed for " + descriptor.testFullyQualifiedName() + ":\n" + tail(validationResult.output())
             );
         }
 
-        CoverageDelta coverageDelta = captureCoverageDelta(descriptor, beforeCoverage, out);
+        CoverageDelta coverageDelta = captureCoverageDelta(descriptor, beforeCoverage, ui);
         AgentUsage totalUsage = initialUsage.plus(repairUsage);
         CostEstimate estimatedCost = pricingConfiguration.estimate(totalUsage);
-        out.printf(
-                "Agent summary for %s: input=%d cached=%d output=%d reasoning=%d total=%d estimated-cost=%s%n",
-                descriptor.className(),
-                totalUsage.inputTokens(),
-                totalUsage.cachedInputTokens(),
-                totalUsage.outputTokens(),
-                totalUsage.reasoningOutputTokens(),
-                totalUsage.totalTokens(),
-                estimatedCost.display()
-        );
         return new GenerationResult(
                 descriptor.testPath(),
                 validationResult.output(),
@@ -138,7 +129,7 @@ public final class CodexCliUnitTestGenerator {
             JavaProjectService.JavaClassDescriptor descriptor,
             String model,
             String prompt,
-            PrintWriter out
+            TerminalUi ui
     ) throws Exception {
         List<String> command = new ArrayList<>();
         command.add("codex");
@@ -156,52 +147,46 @@ public final class CodexCliUnitTestGenerator {
         command.add("--ephemeral");
         command.add("-");
 
+        TerminalUi.Spinner spinner = ui.spinner("codex generating " + descriptor.testClassName());
         ProcessExecutor.ExecutionResult result = processExecutor.execute(
                 command,
                 descriptor.projectRoot(),
                 CODEX_TIMEOUT,
-                true,
-                out,
-                prompt
+                false,
+                new PrintWriter(System.err, true),
+                prompt,
+                spinner
         );
         if (result.timedOut()) {
             throw new IllegalStateException("Codex timed out while generating tests for " + descriptor.className() + ".");
         }
         if (result.exitCode() != 0) {
             throw new IllegalStateException(
-                    "Codex failed while generating tests for " + descriptor.className() + ":\n" + result.output()
+                    "Codex failed while generating tests for " + descriptor.className() + ":\n" + tail(result.output())
             );
         }
-        AgentUsage usage = parseUsage(result.output());
-        out.printf(
-                "Codex usage for %s: input=%d cached=%d output=%d reasoning=%d total=%d%n",
-                descriptor.className(),
-                usage.inputTokens(),
-                usage.cachedInputTokens(),
-                usage.outputTokens(),
-                usage.reasoningOutputTokens(),
-                usage.totalTokens()
-        );
-        return usage;
+        return parseUsage(result.output());
     }
 
     private ProcessExecutor.ExecutionResult validate(
             JavaProjectService.JavaClassDescriptor descriptor,
-            PrintWriter out
+            TerminalUi ui
     ) throws Exception {
         List<String> command = projectService.buildValidationCommand(descriptor);
-        out.printf("Running validation: %s%n", String.join(" ", command));
+        TerminalUi.Spinner spinner = ui.spinner("validating " + descriptor.testClassName());
         ProcessExecutor.ExecutionResult result = processExecutor.execute(
                 command,
                 descriptor.moduleRoot(),
                 VALIDATION_TIMEOUT,
-                true,
-                out
+                false,
+                new PrintWriter(System.err, true),
+                null,
+                spinner
         );
         if (result.timedOut()) {
             throw new IllegalStateException(
                     "Validation timed out for " + descriptor.testFullyQualifiedName() + "."
-            );
+                );
         }
         return result;
     }
@@ -209,25 +194,27 @@ public final class CodexCliUnitTestGenerator {
     private CoverageDelta captureCoverageDelta(
             JavaProjectService.JavaClassDescriptor descriptor,
             CoverageReportService.CoverageSnapshot beforeCoverage,
-            PrintWriter out
+            TerminalUi ui
     ) throws Exception {
         Optional<List<String>> coverageCommand = projectService.buildCoverageCommand(descriptor);
         if (coverageCommand.isEmpty()) {
             return CoverageDelta.unavailable("JaCoCo task was not detected in the build.");
         }
-        out.printf("Running JaCoCo coverage: %s%n", String.join(" ", coverageCommand.get()));
+        TerminalUi.Spinner spinner = ui.spinner("running JaCoCo for " + descriptor.className());
         ProcessExecutor.ExecutionResult result = processExecutor.execute(
                 coverageCommand.get(),
                 descriptor.moduleRoot(),
                 COVERAGE_TIMEOUT,
-                true,
-                out
+                false,
+                new PrintWriter(System.err, true),
+                null,
+                spinner
         );
         if (result.timedOut()) {
             return CoverageDelta.unavailable("JaCoCo coverage command timed out.");
         }
         if (result.exitCode() != 0) {
-            return CoverageDelta.unavailable("JaCoCo coverage command failed.");
+            return CoverageDelta.unavailable("JaCoCo coverage command failed:\n" + tail(result.output()));
         }
         CoverageReportService.CoverageSnapshot afterCoverage = coverageReportService.readProjectSnapshot(descriptor.moduleRoot())
                 .orElse(null);
@@ -236,23 +223,6 @@ public final class CodexCliUnitTestGenerator {
         }
         CoverageReportService.ClassCoverage beforeClass = classCoverageOrZero(beforeCoverage, descriptor);
         CoverageReportService.ClassCoverage afterClass = classCoverageOrZero(afterCoverage, descriptor);
-        if (beforeClass == null) {
-            out.printf(
-                    "Coverage for %s: line %.1f%%, branch %.1f%% (baseline unavailable)%n",
-                    descriptor.className(),
-                    afterClass.lineCoverage(),
-                    afterClass.branchCoverage()
-            );
-        } else {
-            out.printf(
-                    "Coverage delta for %s: line %.1f%% -> %.1f%%, branch %.1f%% -> %.1f%%%n",
-                    descriptor.className(),
-                    beforeClass.lineCoverage(),
-                    afterClass.lineCoverage(),
-                    beforeClass.branchCoverage(),
-                    afterClass.branchCoverage()
-            );
-        }
         return new CoverageDelta(beforeCoverage, afterCoverage, beforeClass, afterClass, null);
     }
 
@@ -366,6 +336,12 @@ public final class CodexCliUnitTestGenerator {
         );
     }
 
+    private String tail(String output) {
+        List<String> lines = output == null ? List.of() : output.lines().toList();
+        int start = Math.max(0, lines.size() - 60);
+        return String.join(System.lineSeparator(), lines.subList(start, lines.size()));
+    }
+
     public record GenerationResult(
             Path outputPath,
             String validationOutput,
@@ -413,6 +389,22 @@ public final class CodexCliUnitTestGenerator {
 
         public boolean available() {
             return afterClassCoverage != null;
+        }
+
+        public Double beforeLineCoverage() {
+            return beforeClassCoverage == null ? null : beforeClassCoverage.lineCoverage();
+        }
+
+        public Double afterLineCoverage() {
+            return afterClassCoverage == null ? null : afterClassCoverage.lineCoverage();
+        }
+
+        public Double beforeBranchCoverage() {
+            return beforeClassCoverage == null ? null : beforeClassCoverage.branchCoverage();
+        }
+
+        public Double afterBranchCoverage() {
+            return afterClassCoverage == null ? null : afterClassCoverage.branchCoverage();
         }
     }
 

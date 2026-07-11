@@ -39,6 +39,8 @@ Update this file when any of these change:
 - Maven wrapper is preferred when `mvnw` exists.
 - Gradle wrapper is preferred when `gradlew` exists.
 - Default coverage threshold is `80%`.
+- The interactive shell stores history at `~/.jaipilot/history`.
+- The CLI UX favors structured sections, tables, coverage meters, and spinners over raw tool logs.
 - Coverage discovery currently looks for JaCoCo XML reports under:
   - `target/site/jacoco/jacoco.xml`
   - `build/reports/jacoco/**/jacoco.xml`

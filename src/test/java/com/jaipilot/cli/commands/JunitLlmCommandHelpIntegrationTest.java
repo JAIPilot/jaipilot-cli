@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.jaipilot.cli.JaiPilotCli;
+import com.jaipilot.cli.JaiPilotCommandLineFactory;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import org.junit.jupiter.api.Test;
@@ -43,7 +44,7 @@ class JunitLlmCommandHelpIntegrationTest {
     @Test
     void rootHelpListsGenerateAndDoctorCommands() {
         StringWriter outBuffer = new StringWriter();
-        CommandLine commandLine = new CommandLine(new JaiPilotCli())
+        CommandLine commandLine = JaiPilotCommandLineFactory.configure(new CommandLine(new JaiPilotCli()))
                 .setOut(new PrintWriter(outBuffer, true))
                 .setErr(new PrintWriter(new StringWriter(), true));
 
@@ -56,9 +57,24 @@ class JunitLlmCommandHelpIntegrationTest {
         assertFalse(outBuffer.toString().contains("login"));
     }
 
+    @Test
+    void invalidGenerateArgumentsShowFriendlyErrorWithoutStackTrace() {
+        StringWriter errBuffer = new StringWriter();
+        CommandLine commandLine = JaiPilotCommandLineFactory.configure(new CommandLine(new JaiPilotCli()))
+                .setOut(new PrintWriter(new StringWriter(), true))
+                .setErr(new PrintWriter(errBuffer, true));
+
+        int exitCode = commandLine.execute("generate", "--coverage-below", "110");
+
+        assertEquals(2, exitCode);
+        assertTrue(errBuffer.toString().contains("--coverage-below must be between 0 and 100."));
+        assertTrue(errBuffer.toString().contains("Run `generate --help` for usage."));
+        assertFalse(errBuffer.toString().contains("Exception"));
+    }
+
     private String executeHelp(String command) {
         StringWriter outBuffer = new StringWriter();
-        CommandLine commandLine = new CommandLine(new JaiPilotCli())
+        CommandLine commandLine = JaiPilotCommandLineFactory.configure(new CommandLine(new JaiPilotCli()))
                 .setOut(new PrintWriter(outBuffer, true))
                 .setErr(new PrintWriter(new StringWriter(), true));
 

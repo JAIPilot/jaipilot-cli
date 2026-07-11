@@ -19,7 +19,8 @@
 
 ## Features
 
-- Interactive shell with `/generate`, `/status`, and `/doctor`
+- JLine-powered interactive shell with command history and completion
+- Rich ANSI output with sections, tables, coverage meters, and live phase spinners
 - Java class targeting by path, fully qualified name, or simple unique class name
 - Batch generation for uncommitted classes
 - Batch generation for classes below a coverage threshold
@@ -27,6 +28,7 @@
 - Before/after coverage summaries for each run
 - Per-class and total agent token usage
 - Optional estimated cost reporting from local pricing env vars
+- Friendly CLI errors instead of raw stack traces
 
 ## Prerequisites
 
@@ -54,21 +56,22 @@ jaipilot --version
 Run bare `jaipilot` to open the interactive shell:
 
 ```text
-JAIPilot
-Project: /path/to/repo
-Build: maven
-Agent: codex
+JAIPilot 1.0.2
+Interactive shell ready
 
-Commands:
-  /generate <class>
-  /generate all changed
-  /generate all uncommitted
-  /generate all coverage 80
-  /generate all for 80% coverage
-  /status
-  /doctor
-  /help
-  /exit
+project           /path/to/repo
+build             maven
+agent             codex
+default coverage  80.0%
+
+-- Commands --------------------------------------------------------------
+  /generate <class>           Generate tests for one Java production class.
+  /generate all changed       Generate tests for changed or uncommitted production classes.
+  /generate all coverage 80   Generate tests for classes below the current threshold.
+  /status                     Show the JaCoCo report summary and classes below threshold.
+  /doctor                     Check local Codex, build, and JaCoCo prerequisites.
+  /help                       Show interactive shell commands.
+  /exit                       Close JAIPilot.
 ```
 
 Direct commands:
@@ -89,8 +92,8 @@ jaipilot doctor
 `jaipilot status` reads the current JaCoCo XML report and prints:
 
 - project root and JaCoCo report path
-- total line and branch coverage
-- classes below the threshold
+- total line and branch coverage meters
+- a table of classes below the threshold
 - whether each class already has a corresponding test file
 
 The default threshold is `80%`.
@@ -99,12 +102,12 @@ The default threshold is `80%`.
 
 Each generation run prints:
 
-- the classes being processed
-- current test state (`test-present` or `test-missing`)
-- Codex usage per class
-- optional estimated cost per class
-- JaCoCo coverage delta for the class when available
-- a final run summary with total usage and overall project coverage improvement
+- a queue table showing target classes, coverage, and current test state
+- live progress for Codex, validation, and JaCoCo phases
+- the generated or updated test path
+- per-class token usage and optional estimated cost
+- per-class JaCoCo coverage deltas when available
+- a final run summary with total usage, total cost, overall project coverage improvement, and remaining below-threshold classes
 
 ## Cost Reporting
 

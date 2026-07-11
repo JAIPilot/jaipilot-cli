@@ -1,14 +1,21 @@
 package com.jaipilot.cli.service;
 
 import com.jaipilot.cli.JaiPilotCli;
-import java.io.BufferedReader;
+import com.jaipilot.cli.ui.TerminalUi;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import org.jline.reader.EndOfFileException;
+import org.jline.reader.LineReader;
+import org.jline.reader.LineReaderBuilder;
+import org.jline.reader.UserInterruptException;
+import org.jline.reader.impl.completer.StringsCompleter;
+import org.jline.terminal.Terminal;
+import org.jline.terminal.TerminalBuilder;
 import picocli.CommandLine;
 
 public final class InteractiveShell {
@@ -22,56 +29,58 @@ public final class InteractiveShell {
     public int run(PrintWriter out, PrintWriter err) {
         Path workingDirectory = Path.of("").toAbsolutePath().normalize();
         Path projectRoot = projectService.resolveProjectRoot(workingDirectory);
-        out.println("JAIPilot");
-        out.printf("Project: %s%n", projectRoot);
-        out.printf("Build: %s%n", projectService.detectBuildTool(projectRoot).displayName());
-        out.println("Agent: codex");
-        out.println();
-        out.println("Commands:");
-        out.println("  /generate <class>");
-        out.println("  /generate all changed");
-        out.println("  /generate all uncommitted");
-        out.println("  /generate all coverage 80");
-        out.println("  /generate all for 80% coverage");
-        out.println("  /status");
-        out.println("  /doctor");
-        out.println("  /help");
-        out.println("  /exit");
-        out.println();
-        out.flush();
+        TerminalUi ui = new TerminalUi(out);
+        ui.printShellWelcome(
+                projectRoot.toString(),
+                projectService.detectBuildTool(projectRoot).displayName(),
+                "codex"
+        );
 
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
+        try (Terminal terminal = TerminalBuilder.builder()
+                .system(true)
+                .jna(false)
+                .jni(false)
+                .jansi(false)
+                .build()) {
+            LineReader reader = buildReader(terminal);
             while (true) {
-                out.print("jaipilot> ");
-                out.flush();
-                String line = reader.readLine();
-                if (line == null) {
+                String line;
+                try {
+                    line = reader.readLine(ui.prompt());
+                } catch (UserInterruptException interrupted) {
+                    continue;
+                } catch (EndOfFileException endOfFile) {
                     out.println();
+                    out.flush();
                     return CommandLine.ExitCode.OK;
                 }
-                String trimmed = line.trim();
+
+                String trimmed = line == null ? "" : line.trim();
                 if (trimmed.isEmpty()) {
                     continue;
                 }
                 if ("/exit".equals(trimmed) || "/quit".equals(trimmed)) {
                     return CommandLine.ExitCode.OK;
                 }
-
-                String[] args = translate(trimmed);
-                if (args.length == 0) {
-                    out.println("Unsupported command. Use /help.");
-                    out.flush();
+                if ("/help".equals(trimmed)) {
+                    ui.printShellHelp();
                     continue;
                 }
 
-                int exitCode = new CommandLine(new JaiPilotCli())
+                String[] args = translate(trimmed);
+                if (args.length == 0) {
+                    ui.warn("Unsupported command. Use /help.");
+                    continue;
+                }
+
+                int exitCode = JaiPilotCli.createCommandLine()
                         .setOut(out)
                         .setErr(err)
                         .execute(args);
                 if (exitCode != CommandLine.ExitCode.OK) {
-                    out.printf("Command exited with code %d.%n", exitCode);
+                    ui.warn("Command exited with code " + exitCode + ".");
                 }
-                out.flush();
+                ui.blankLine();
             }
         } catch (IOException exception) {
             err.println("Interactive shell failed: " + exception.getMessage());
@@ -80,10 +89,28 @@ public final class InteractiveShell {
         }
     }
 
+    private LineReader buildReader(Terminal terminal) throws IOException {
+        Path historyPath = Path.of(System.getProperty("user.home"), ".jaipilot", "history");
+        Files.createDirectories(historyPath.getParent());
+        return LineReaderBuilder.builder()
+                .appName("jaipilot")
+                .terminal(terminal)
+                .variable(LineReader.HISTORY_FILE, historyPath)
+                .completer(new StringsCompleter(
+                        "/generate",
+                        "/generate all changed",
+                        "/generate all uncommitted",
+                        "/generate all coverage 80",
+                        "/generate all for 80% coverage",
+                        "/status",
+                        "/doctor",
+                        "/help",
+                        "/exit"
+                ))
+                .build();
+    }
+
     private String[] translate(String input) {
-        if ("/help".equals(input)) {
-            return new String[] {"--help"};
-        }
         if ("/doctor".equals(input)) {
             return new String[] {"doctor"};
         }

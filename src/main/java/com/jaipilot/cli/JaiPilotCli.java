@@ -30,8 +30,12 @@ public final class JaiPilotCli implements Callable<Integer> {
     private CommandSpec spec;
 
     public static void main(String[] args) {
-        int exitCode = new CommandLine(new JaiPilotCli()).execute(args);
+        int exitCode = createCommandLine().execute(args);
         System.exit(exitCode);
+    }
+
+    public static CommandLine createCommandLine() {
+        return JaiPilotCommandLineFactory.create();
     }
 
     @Override
