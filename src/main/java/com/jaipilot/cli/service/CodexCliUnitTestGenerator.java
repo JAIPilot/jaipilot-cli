@@ -18,7 +18,6 @@ public final class CodexCliUnitTestGenerator {
     private static final Duration CODEX_TIMEOUT = Duration.ofMinutes(20);
     private static final Duration VALIDATION_TIMEOUT = Duration.ofMinutes(10);
     private static final Duration COVERAGE_TIMEOUT = Duration.ofMinutes(15);
-    private static final int MAX_FIX_ATTEMPTS = 1;
     private static final String INPUT_COST_ENV = "JAIPILOT_CODEX_INPUT_COST_PER_MILLION_USD";
     private static final String CACHED_INPUT_COST_ENV = "JAIPILOT_CODEX_CACHED_INPUT_COST_PER_MILLION_USD";
     private static final String OUTPUT_COST_ENV = "JAIPILOT_CODEX_OUTPUT_COST_PER_MILLION_USD";
@@ -28,11 +27,11 @@ public final class CodexCliUnitTestGenerator {
     private static final String OUTPUT_COST_PROPERTY = "jaipilot.codex.outputCostPerMillionUsd";
     private static final String REASONING_OUTPUT_COST_PROPERTY = "jaipilot.codex.reasoningOutputCostPerMillionUsd";
 
-    private final ProjectFileService fileService;
     private final JavaProjectService projectService;
     private final CoverageReportService coverageReportService;
     private final ProcessExecutor processExecutor;
     private final PricingConfiguration pricingConfiguration;
+    private final PromptTemplateService promptTemplateService;
 
     public CodexCliUnitTestGenerator(ProjectFileService fileService, JavaProjectService projectService) {
         this(
@@ -40,7 +39,8 @@ public final class CodexCliUnitTestGenerator {
                 projectService,
                 new CoverageReportService(),
                 new ProcessExecutor(),
-                PricingConfiguration.fromEnvironment()
+                PricingConfiguration.fromEnvironment(),
+                new PromptTemplateService(fileService)
         );
     }
 
@@ -49,13 +49,14 @@ public final class CodexCliUnitTestGenerator {
             JavaProjectService projectService,
             CoverageReportService coverageReportService,
             ProcessExecutor processExecutor,
-            PricingConfiguration pricingConfiguration
+            PricingConfiguration pricingConfiguration,
+            PromptTemplateService promptTemplateService
     ) {
-        this.fileService = fileService;
         this.projectService = projectService;
         this.coverageReportService = coverageReportService;
         this.processExecutor = processExecutor;
         this.pricingConfiguration = pricingConfiguration;
+        this.promptTemplateService = promptTemplateService;
     }
 
     public Optional<String> codexVersion(Path workingDirectory) {
@@ -87,19 +88,12 @@ public final class CodexCliUnitTestGenerator {
                 ? coverageReportService.readProjectSnapshot(descriptor.moduleRoot()).orElse(null)
                 : null;
 
-        AgentUsage initialUsage = runCodex(descriptor, model, buildInitialPrompt(descriptor), ui);
+        AgentUsage initialUsage = runCodex(descriptor, model, promptTemplateService.buildInitialPrompt(descriptor), ui);
         if (!Files.isRegularFile(descriptor.testPath())) {
             throw new IllegalStateException("Expected generated test file was not created: " + descriptor.testPath());
         }
 
         ProcessExecutor.ExecutionResult validationResult = validate(descriptor, ui);
-        AgentUsage repairUsage = AgentUsage.zero();
-        for (int attempt = 1; validationResult.exitCode() != 0 && attempt <= MAX_FIX_ATTEMPTS; attempt++) {
-            ui.warn("Validation failed for " + descriptor.className() + ". Requesting one repair pass from Codex.");
-            repairUsage = repairUsage.plus(runCodex(descriptor, model, buildRepairPrompt(descriptor, validationResult.output()), ui));
-            validationResult = validate(descriptor, ui);
-        }
-
         if (validationResult.exitCode() != 0) {
             throw new IllegalStateException(
                     "Validation failed for " + descriptor.testFullyQualifiedName() + ":\n" + tail(validationResult.output())
@@ -107,12 +101,11 @@ public final class CodexCliUnitTestGenerator {
         }
 
         CoverageDelta coverageDelta = captureCoverageDelta(descriptor, beforeCoverage, ui);
-        AgentUsage totalUsage = initialUsage.plus(repairUsage);
-        CostEstimate estimatedCost = pricingConfiguration.estimate(totalUsage);
+        CostEstimate estimatedCost = pricingConfiguration.estimate(initialUsage);
         return new GenerationResult(
                 descriptor.testPath(),
                 validationResult.output(),
-                totalUsage,
+                initialUsage,
                 coverageDelta,
                 estimatedCost,
                 testExistedBefore
@@ -250,90 +243,6 @@ public final class CodexCliUnitTestGenerator {
             }
         }
         return usage;
-    }
-
-    private String buildInitialPrompt(JavaProjectService.JavaClassDescriptor descriptor) {
-        String sourceContent = fileService.readFile(descriptor.cutPath());
-        String existingTest = Files.isRegularFile(descriptor.testPath())
-                ? fileService.readFile(descriptor.testPath())
-                : "";
-        return """
-                Generate or update JUnit tests for one Java production class.
-
-                Before editing, read these files if they exist:
-                - AGENTS.md
-                - .jaipilot/project-memory.md
-                - .agents/skills/jaipilot-generate/SKILL.md
-
-                Rules:
-                - Do not call any JAIPilot, Supabase, or custom backend endpoint.
-                - Use only local repository files and locally installed tools.
-                - Do not modify production code.
-                - Prefer JUnit 5 and follow existing project conventions.
-                - Improve JaCoCo line and branch coverage for the class under test.
-                - Keep tests deterministic and avoid flaky timing/network behavior.
-                - Write the test file at the exact target path below.
-                - After editing, stop and let JAIPilot run validation.
-
-                Project root: %s
-                Module root: %s
-                Class under test: %s
-                Class file: %s
-                Target test file: %s
-                Target test class: %s
-
-                Source file content:
-                ```java
-                %s
-                ```
-
-                Existing test content:
-                ```java
-                %s
-                ```
-                """.formatted(
-                descriptor.projectRoot(),
-                descriptor.moduleRoot(),
-                descriptor.fullyQualifiedName(),
-                descriptor.cutPath(),
-                descriptor.testPath(),
-                descriptor.testFullyQualifiedName(),
-                sourceContent,
-                existingTest
-        );
-    }
-
-    private String buildRepairPrompt(
-            JavaProjectService.JavaClassDescriptor descriptor,
-            String validationOutput
-    ) {
-        String currentTest = fileService.readFile(descriptor.testPath());
-        return """
-                Repair the generated JUnit test for this Java class.
-
-                Rules:
-                - Do not modify production code.
-                - Only edit the test file at the target path.
-                - Fix the test so it passes the project's local build command.
-
-                Class under test: %s
-                Target test file: %s
-
-                Current test content:
-                ```java
-                %s
-                ```
-
-                Validation output:
-                ```text
-                %s
-                ```
-                """.formatted(
-                descriptor.fullyQualifiedName(),
-                descriptor.testPath(),
-                currentTest,
-                validationOutput
-        );
     }
 
     private String tail(String output) {

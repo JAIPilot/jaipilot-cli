@@ -7,7 +7,7 @@ This file is the durable local memory for Codex-driven JAIPilot runs in this rep
 - Prefer the backend-free local workflow.
 - Use `codex` as the generation engine.
 - Use the JAIPilot CLI as the orchestrator.
-- Do not depend on Supabase or JAIPilot custom backend calls for local test generation.
+- Do not depend on any custom backend or hosted service for local test generation.
 
 ## Command Surface
 

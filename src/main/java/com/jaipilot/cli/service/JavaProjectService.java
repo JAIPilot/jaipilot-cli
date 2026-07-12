@@ -82,6 +82,18 @@ public final class JavaProjectService {
         return sorted(classes.values());
     }
 
+    public List<JavaClassDescriptor> findProductionClasses(Path projectRoot) {
+        List<JavaClassDescriptor> classes = new ArrayList<>();
+        try (var paths = Files.walk(projectRoot)) {
+            paths.filter(Files::isRegularFile)
+                    .filter(this::isProductionJavaPath)
+                    .forEach(path -> classes.add(describeProductionClass(path, projectRoot)));
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to scan Java classes under " + projectRoot, exception);
+        }
+        return sorted(classes);
+    }
+
     public List<JavaClassDescriptor> findClassesBelowCoverage(Path projectRoot, double threshold) {
         CoverageReportService.CoverageSnapshot snapshot = coverageReportService.readProjectSnapshot(projectRoot)
                 .orElseThrow(() -> new IllegalStateException(
@@ -151,18 +163,6 @@ public final class JavaProjectService {
 
     private List<String> lines(String value) {
         return value == null ? List.of() : value.lines().toList();
-    }
-
-    private List<JavaClassDescriptor> findProductionClasses(Path projectRoot) {
-        List<JavaClassDescriptor> classes = new ArrayList<>();
-        try (var paths = Files.walk(projectRoot)) {
-            paths.filter(Files::isRegularFile)
-                    .filter(this::isProductionJavaPath)
-                    .forEach(path -> classes.add(describeProductionClass(path, projectRoot)));
-        } catch (IOException exception) {
-            throw new IllegalStateException("Failed to scan Java classes under " + projectRoot, exception);
-        }
-        return sorted(classes);
     }
 
     private boolean isProductionJavaPath(Path path) {

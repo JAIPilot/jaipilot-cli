@@ -15,11 +15,11 @@
   </p>
 </div>
 
-`jaipilot-cli` is a Java-only local workflow. It does not call a JAIPilot backend, Supabase, or any custom service. Test generation comes from the coding agent you already use, starting with `codex`.
+`jaipilot-cli` is a Java-only local workflow. It does not call any custom backend or hosted service. Test generation comes from the coding agent you already use, starting with `codex`.
 
 ## Features
 
-- JLine-powered interactive shell with command history and completion
+- JLine-powered interactive shell with command history, contextual Tab completion, and completion menus
 - Rich ANSI output with sections, tables, coverage meters, and live phase spinners
 - Java class targeting by path, fully qualified name, or simple unique class name
 - Batch generation for uncommitted classes
@@ -133,14 +133,21 @@ JAIPilot keeps the local workflow explicit so Codex does not need to rediscover 
 - `.agents/skills/jaipilot-generate/SKILL.md`
   Reusable instructions for the JAIPilot generation workflow.
 
+## Prompt Templates
+
+The bundled Codex prompt templates now live in:
+
+- `src/main/resources/prompts/generate-java-tests.md`
+
+JAIPilot fills that template with class paths, source code, and existing test code at runtime.
+
 ## How It Works
 
 1. JAIPilot resolves one or more Java production classes from your input.
 2. It asks `codex` to create or update the corresponding JUnit test under `src/test/java`.
 3. It runs the module test command locally.
-4. If validation fails once, it asks Codex to repair the generated test.
-5. It runs JaCoCo coverage for the target class when available.
-6. It prints per-class and aggregate coverage and usage summaries.
+4. It runs JaCoCo coverage for the target class when available.
+5. It prints per-class and aggregate coverage and usage summaries.
 
 ## License
 

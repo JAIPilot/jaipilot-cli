@@ -1,11 +1,11 @@
 ---
 name: jaipilot-generate
-description: Generate or repair Java unit tests in this repository using JAIPilot's local Codex workflow.
+description: Generate Java unit tests in this repository using JAIPilot's local Codex workflow.
 ---
 
 # JAIPilot Generate
 
-Use this skill when the task is to generate or repair Java unit tests for one or more production classes in this repository.
+Use this skill when the task is to generate Java unit tests for one or more production classes in this repository.
 
 ## Workflow
 
@@ -24,5 +24,4 @@ Use this skill when the task is to generate or repair Java unit tests for one or
 
 - Use JUnit 5 conventions already present in the repository.
 - Respect module boundaries in multi-module Maven or Gradle builds.
-- If the generated test fails validation, repair the test before stopping.
-- Do not call JAIPilot, Supabase, or any custom backend endpoint for this local workflow.
+- Do not call any custom backend endpoint or hosted service for this local workflow.

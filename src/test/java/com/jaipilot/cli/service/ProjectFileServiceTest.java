@@ -5,6 +5,7 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProjectFileServiceTest {
 
@@ -59,5 +60,12 @@ class ProjectFileServiceTest {
         projectFileService.writeFile(javaFile, source);
 
         assertEquals(source, Files.readString(javaFile));
+    }
+
+    @Test
+    void readResourceReadsBundledPromptTemplate() {
+        String template = projectFileService.readResource("prompts/generate-java-tests.md");
+
+        assertTrue(template.contains("Generate or update JUnit tests for one Java production class."));
     }
 }

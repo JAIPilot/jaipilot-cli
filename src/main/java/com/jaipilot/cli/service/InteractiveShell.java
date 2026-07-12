@@ -13,7 +13,6 @@ import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.UserInterruptException;
-import org.jline.reader.impl.completer.StringsCompleter;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 import picocli.CommandLine;
@@ -42,7 +41,7 @@ public final class InteractiveShell {
                 .jni(false)
                 .jansi(false)
                 .build()) {
-            LineReader reader = buildReader(terminal);
+            LineReader reader = buildReader(terminal, projectRoot);
             while (true) {
                 String line;
                 try {
@@ -89,39 +88,46 @@ public final class InteractiveShell {
         }
     }
 
-    private LineReader buildReader(Terminal terminal) throws IOException {
+    private LineReader buildReader(Terminal terminal, Path projectRoot) throws IOException {
         Path historyPath = Path.of(System.getProperty("user.home"), ".jaipilot", "history");
         Files.createDirectories(historyPath.getParent());
         return LineReaderBuilder.builder()
                 .appName("jaipilot")
                 .terminal(terminal)
                 .variable(LineReader.HISTORY_FILE, historyPath)
-                .completer(new StringsCompleter(
-                        "/generate",
-                        "/generate all changed",
-                        "/generate all uncommitted",
-                        "/generate all coverage 80",
-                        "/generate all for 80% coverage",
-                        "/status",
-                        "/doctor",
-                        "/help",
-                        "/exit"
-                ))
+                .option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)
+                .option(LineReader.Option.CASE_INSENSITIVE, true)
+                .option(LineReader.Option.COMPLETE_MATCHER_CAMELCASE, true)
+                .option(LineReader.Option.AUTO_MENU_LIST, true)
+                .option(LineReader.Option.LIST_PACKED, true)
+                .option(LineReader.Option.AUTO_GROUP, true)
+                .option(LineReader.Option.GROUP_PERSIST, true)
+                .completer(new InteractiveShellCompleter(projectService, projectRoot))
                 .build();
     }
 
     private String[] translate(String input) {
-        if ("/doctor".equals(input)) {
-            return new String[] {"doctor"};
-        }
-        if ("/status".equals(input)) {
-            return new String[] {"status"};
-        }
-        if (!input.startsWith("/generate")) {
+        if (!input.startsWith("/")) {
             return new String[0];
         }
 
         String[] tokens = tokenize(input.substring(1));
+        if (tokens.length == 0) {
+            return new String[0];
+        }
+        if ("doctor".equals(tokens[0])) {
+            return Arrays.copyOf(tokens, tokens.length);
+        }
+        if ("status".equals(tokens[0])) {
+            if (tokens.length == 2 && !tokens[1].startsWith("-")) {
+                return new String[] {"status", "--threshold", stripPercent(tokens[1])};
+            }
+            return Arrays.copyOf(tokens, tokens.length);
+        }
+        if (!"generate".equals(tokens[0])) {
+            return new String[0];
+        }
+
         if (tokens.length >= 3 && "generate".equals(tokens[0]) && "all".equals(tokens[1]) && "changed".equals(tokens[2])) {
             return new String[] {"generate", "--changed"};
         }
@@ -142,7 +148,7 @@ public final class InteractiveShell {
                 && "coverage".equals(tokens[4])) {
             return new String[] {"generate", "--coverage-below", stripPercent(tokens[3])};
         }
-        if (tokens.length >= 2 && "generate".equals(tokens[0])) {
+        if (tokens.length >= 1 && "generate".equals(tokens[0])) {
             return Arrays.copyOf(tokens, tokens.length);
         }
         return new String[0];

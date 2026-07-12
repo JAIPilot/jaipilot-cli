@@ -2,7 +2,7 @@
 
 ## Project Overview
 - `jaipilot-cli` is a Java 17+ CLI for local Java unit-test generation with Codex.
-- The product is intentionally backend-free for local generation: no JAIPilot, Supabase, or custom service calls.
+- The product is intentionally backend-free for local generation: no custom backend or hosted service calls.
 - Treat `AGENTS.md`, `.jaipilot/project-memory.md`, and `.agents/skills/jaipilot-generate/SKILL.md` as the durable context for repeated runs.
 
 ## Setup Commands
@@ -17,6 +17,7 @@
 - `scripts/build-bundled-dist.sh` builds the bundled runtime distribution.
 - `scripts/release-build.sh` prepares a semver release.
 - `install.sh` installs the latest published CLI release.
+- `src/main/resources/prompts/` contains the bundled Codex prompt templates.
 - `.agents/skills/jaipilot-generate/SKILL.md` Codex skill entry for the local generation workflow.
 - `.jaipilot/project-memory.md` evolving local-memory file for Codex and JAIPilot.
 

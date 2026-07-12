@@ -44,6 +44,9 @@ public final class TerminalUi {
         metadata.put("agent", agent);
         metadata.put("default coverage", "%.1f%%".formatted(StatusCommand.DEFAULT_COVERAGE_THRESHOLD));
         printKeyValues(metadata);
+        out.println(style("faint", "Press Tab to complete commands, options, thresholds, and Java class selectors."));
+        out.println();
+        out.flush();
         printShellHelp();
     }
 

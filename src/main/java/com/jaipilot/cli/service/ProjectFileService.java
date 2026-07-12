@@ -1,6 +1,7 @@
 package com.jaipilot.cli.service;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -30,6 +31,17 @@ public final class ProjectFileService {
             return Files.readString(path, StandardCharsets.UTF_8);
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to read file " + path, exception);
+        }
+    }
+
+    public String readResource(String resourcePath) {
+        try (InputStream inputStream = ProjectFileService.class.getClassLoader().getResourceAsStream(resourcePath)) {
+            if (inputStream == null) {
+                throw new IllegalStateException("Classpath resource not found: " + resourcePath);
+            }
+            return new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to read classpath resource " + resourcePath, exception);
         }
     }
 
