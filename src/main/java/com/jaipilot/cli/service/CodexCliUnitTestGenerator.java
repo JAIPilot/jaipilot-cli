@@ -80,7 +80,9 @@ public final class CodexCliUnitTestGenerator {
     public GenerationResult generate(
             JavaProjectService.JavaClassDescriptor descriptor,
             String model,
-            TerminalUi ui
+            TerminalUi ui,
+            boolean showLogs,
+            PrintWriter logWriter
     ) throws Exception {
         ensureCodexAvailable(descriptor.projectRoot());
         boolean testExistedBefore = Files.isRegularFile(descriptor.testPath());
@@ -88,19 +90,26 @@ public final class CodexCliUnitTestGenerator {
                 ? coverageReportService.readProjectSnapshot(descriptor.moduleRoot()).orElse(null)
                 : null;
 
-        AgentUsage initialUsage = runCodex(descriptor, model, promptTemplateService.buildInitialPrompt(descriptor), ui);
+        AgentUsage initialUsage = runCodex(
+                descriptor,
+                model,
+                promptTemplateService.buildInitialPrompt(descriptor),
+                ui,
+                showLogs,
+                logWriter
+        );
         if (!Files.isRegularFile(descriptor.testPath())) {
             throw new IllegalStateException("Expected generated test file was not created: " + descriptor.testPath());
         }
 
-        ProcessExecutor.ExecutionResult validationResult = validate(descriptor, ui);
+        ProcessExecutor.ExecutionResult validationResult = validate(descriptor, ui, showLogs, logWriter);
         if (validationResult.exitCode() != 0) {
             throw new IllegalStateException(
                     "Validation failed for " + descriptor.testFullyQualifiedName() + ":\n" + tail(validationResult.output())
             );
         }
 
-        CoverageDelta coverageDelta = captureCoverageDelta(descriptor, beforeCoverage, ui);
+        CoverageDelta coverageDelta = captureCoverageDelta(descriptor, beforeCoverage, ui, showLogs, logWriter);
         CostEstimate estimatedCost = pricingConfiguration.estimate(initialUsage);
         return new GenerationResult(
                 descriptor.testPath(),
@@ -122,7 +131,9 @@ public final class CodexCliUnitTestGenerator {
             JavaProjectService.JavaClassDescriptor descriptor,
             String model,
             String prompt,
-            TerminalUi ui
+            TerminalUi ui,
+            boolean showLogs,
+            PrintWriter logWriter
     ) throws Exception {
         List<String> command = new ArrayList<>();
         command.add("codex");
@@ -140,15 +151,15 @@ public final class CodexCliUnitTestGenerator {
         command.add("--ephemeral");
         command.add("-");
 
-        TerminalUi.Spinner spinner = ui.spinner("codex generating " + descriptor.testClassName());
+        printLiveLogHeader(ui, logWriter, showLogs, "agent", command);
         ProcessExecutor.ExecutionResult result = processExecutor.execute(
                 command,
                 descriptor.projectRoot(),
                 CODEX_TIMEOUT,
-                false,
-                new PrintWriter(System.err, true),
+                showLogs,
+                logWriter,
                 prompt,
-                spinner
+                progressListener(ui, "codex generating " + descriptor.testClassName(), showLogs)
         );
         if (result.timedOut()) {
             throw new IllegalStateException("Codex timed out while generating tests for " + descriptor.className() + ".");
@@ -163,18 +174,20 @@ public final class CodexCliUnitTestGenerator {
 
     private ProcessExecutor.ExecutionResult validate(
             JavaProjectService.JavaClassDescriptor descriptor,
-            TerminalUi ui
+            TerminalUi ui,
+            boolean showLogs,
+            PrintWriter logWriter
     ) throws Exception {
         List<String> command = projectService.buildValidationCommand(descriptor);
-        TerminalUi.Spinner spinner = ui.spinner("validating " + descriptor.testClassName());
+        printLiveLogHeader(ui, logWriter, showLogs, "validate", command);
         ProcessExecutor.ExecutionResult result = processExecutor.execute(
                 command,
                 descriptor.moduleRoot(),
                 VALIDATION_TIMEOUT,
-                false,
-                new PrintWriter(System.err, true),
+                showLogs,
+                logWriter,
                 null,
-                spinner
+                progressListener(ui, "validating " + descriptor.testClassName(), showLogs)
         );
         if (result.timedOut()) {
             throw new IllegalStateException(
@@ -187,21 +200,23 @@ public final class CodexCliUnitTestGenerator {
     private CoverageDelta captureCoverageDelta(
             JavaProjectService.JavaClassDescriptor descriptor,
             CoverageReportService.CoverageSnapshot beforeCoverage,
-            TerminalUi ui
+            TerminalUi ui,
+            boolean showLogs,
+            PrintWriter logWriter
     ) throws Exception {
         Optional<List<String>> coverageCommand = projectService.buildCoverageCommand(descriptor);
         if (coverageCommand.isEmpty()) {
             return CoverageDelta.unavailable("JaCoCo task was not detected in the build.");
         }
-        TerminalUi.Spinner spinner = ui.spinner("running JaCoCo for " + descriptor.className());
+        printLiveLogHeader(ui, logWriter, showLogs, "coverage", coverageCommand.get());
         ProcessExecutor.ExecutionResult result = processExecutor.execute(
                 coverageCommand.get(),
                 descriptor.moduleRoot(),
                 COVERAGE_TIMEOUT,
-                false,
-                new PrintWriter(System.err, true),
+                showLogs,
+                logWriter,
                 null,
-                spinner
+                progressListener(ui, "running JaCoCo for " + descriptor.className(), showLogs)
         );
         if (result.timedOut()) {
             return CoverageDelta.unavailable("JaCoCo coverage command timed out.");
@@ -243,6 +258,41 @@ public final class CodexCliUnitTestGenerator {
             }
         }
         return usage;
+    }
+
+    private ProcessExecutor.ProgressListener progressListener(TerminalUi ui, String label, boolean showLogs) {
+        if (showLogs) {
+            return ProcessExecutor.ProgressListener.noOp();
+        }
+        return ui.spinner(label);
+    }
+
+    private void printLiveLogHeader(
+            TerminalUi ui,
+            PrintWriter logWriter,
+            boolean showLogs,
+            String stage,
+            List<String> command
+    ) {
+        if (!showLogs) {
+            return;
+        }
+        logWriter.printf("%s %s%n", ui.badge(TerminalUi.Tone.PRIMARY, stage), formatCommand(command));
+        logWriter.flush();
+    }
+
+    private String formatCommand(List<String> command) {
+        return command.stream()
+                .map(this::quoteIfNeeded)
+                .reduce((left, right) -> left + " " + right)
+                .orElse("");
+    }
+
+    private String quoteIfNeeded(String value) {
+        if (value.indexOf(' ') < 0 && value.indexOf('\t') < 0) {
+            return value;
+        }
+        return "\"" + value.replace("\"", "\\\"") + "\"";
     }
 
     private String tail(String output) {

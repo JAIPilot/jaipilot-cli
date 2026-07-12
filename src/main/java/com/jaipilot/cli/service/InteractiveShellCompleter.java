@@ -27,7 +27,8 @@ public final class InteractiveShellCompleter implements Completer {
             "--changed",
             "--coverage-below",
             "--agent",
-            "--model"
+            "--model",
+            "--show-logs"
     );
     private static final List<String> STATUS_OPTIONS = List.of("--threshold");
     private static final List<String> THRESHOLD_VALUES = List.of("70", "75", "80", "85", "90", "95");
@@ -287,6 +288,7 @@ public final class InteractiveShellCompleter implements Completer {
             case "--coverage-below" -> "Generate tests for classes below a coverage threshold";
             case "--agent" -> "Override the agent provider";
             case "--model" -> "Override the Codex model";
+            case "--show-logs" -> "Stream live Codex, validation, and JaCoCo logs";
             default -> "Command option";
         };
         return new Candidate(option, option, "option", description, null, null, true);

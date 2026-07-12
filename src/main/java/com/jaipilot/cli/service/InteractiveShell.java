@@ -9,12 +9,17 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import org.jline.keymap.KeyMap;
+import org.jline.reader.Binding;
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
+import org.jline.reader.Reference;
 import org.jline.reader.UserInterruptException;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
+import org.jline.utils.InfoCmp.Capability;
+import org.jline.widget.AutosuggestionWidgets;
 import picocli.CommandLine;
 
 public final class InteractiveShell {
@@ -91,19 +96,40 @@ public final class InteractiveShell {
     private LineReader buildReader(Terminal terminal, Path projectRoot) throws IOException {
         Path historyPath = Path.of(System.getProperty("user.home"), ".jaipilot", "history");
         Files.createDirectories(historyPath.getParent());
-        return LineReaderBuilder.builder()
+        LineReader reader = LineReaderBuilder.builder()
                 .appName("jaipilot")
                 .terminal(terminal)
                 .variable(LineReader.HISTORY_FILE, historyPath)
                 .option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)
                 .option(LineReader.Option.CASE_INSENSITIVE, true)
                 .option(LineReader.Option.COMPLETE_MATCHER_CAMELCASE, true)
+                .option(LineReader.Option.AUTO_LIST, true)
+                .option(LineReader.Option.LIST_AMBIGUOUS, true)
+                .option(LineReader.Option.AUTO_MENU, true)
                 .option(LineReader.Option.AUTO_MENU_LIST, true)
+                .option(LineReader.Option.MENU_COMPLETE, true)
                 .option(LineReader.Option.LIST_PACKED, true)
                 .option(LineReader.Option.AUTO_GROUP, true)
                 .option(LineReader.Option.GROUP_PERSIST, true)
                 .completer(new InteractiveShellCompleter(projectService, projectRoot))
                 .build();
+        reader.setVariable(LineReader.LIST_MAX, 10_000);
+        reader.setVariable(LineReader.MENU_LIST_MAX, 10_000);
+        bindCompletionKeys(reader, terminal);
+        new AutosuggestionWidgets(reader).enable();
+        return reader;
+    }
+
+    private void bindCompletionKeys(LineReader reader, Terminal terminal) {
+        KeyMap<Binding> mainKeyMap = reader.getKeyMaps().get(LineReader.MAIN);
+        if (mainKeyMap == null) {
+            return;
+        }
+        mainKeyMap.bind(new Reference(LineReader.MENU_COMPLETE), "\t");
+        String reverseMenuKey = KeyMap.key(terminal, Capability.key_btab);
+        if (reverseMenuKey != null && !reverseMenuKey.isBlank()) {
+            mainKeyMap.bind(new Reference(LineReader.REVERSE_MENU_COMPLETE), reverseMenuKey);
+        }
     }
 
     private String[] translate(String input) {

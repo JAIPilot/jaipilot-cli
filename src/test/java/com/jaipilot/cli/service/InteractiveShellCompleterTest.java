@@ -32,6 +32,7 @@ class InteractiveShellCompleterTest {
 
         assertTrue(values.contains("--coverage-below"));
         assertTrue(values.contains("--agent"));
+        assertTrue(values.contains("--show-logs"));
         assertTrue(values.contains("all"));
         assertTrue(values.contains("OrderService"));
         assertTrue(values.contains("OwnerService"));

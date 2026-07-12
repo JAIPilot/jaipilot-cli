@@ -19,6 +19,7 @@ class JunitLlmCommandHelpIntegrationTest {
 
         assertTrue(helpOutput.contains("--changed"));
         assertTrue(helpOutput.contains("--coverage-below"));
+        assertTrue(helpOutput.contains("--show-logs"));
         assertFalse(helpOutput.contains("--output"));
         assertFalse(helpOutput.contains("--build-executable"));
         assertFalse(helpOutput.contains("--build-arg"));

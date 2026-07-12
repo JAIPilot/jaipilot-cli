@@ -19,7 +19,7 @@
 
 ## Features
 
-- JLine-powered interactive shell with command history, contextual Tab completion, and completion menus
+- JLine-powered interactive shell with command history, visible Tab completion menus, and inline history suggestions
 - Rich ANSI output with sections, tables, coverage meters, and live phase spinners
 - Java class targeting by path, fully qualified name, or simple unique class name
 - Batch generation for uncommitted classes
@@ -56,7 +56,7 @@ jaipilot --version
 Run bare `jaipilot` to open the interactive shell:
 
 ```text
-JAIPilot 1.0.2
+JAIPilot 1.0.4
 Interactive shell ready
 
 project           /path/to/repo
@@ -64,14 +64,17 @@ build             maven
 agent             codex
 default coverage  80.0%
 
+Press Tab to open suggestions and complete commands, options, thresholds, and Java class selectors.
+
 -- Commands --------------------------------------------------------------
-  /generate <class>           Generate tests for one Java production class.
-  /generate all changed       Generate tests for changed or uncommitted production classes.
-  /generate all coverage 80   Generate tests for classes below the current threshold.
-  /status                     Show the JaCoCo report summary and classes below threshold.
-  /doctor                     Check local Codex, build, and JaCoCo prerequisites.
-  /help                       Show interactive shell commands.
-  /exit                       Close JAIPilot.
+  /generate <class>              Generate tests for one Java production class.
+  /generate all changed          Generate tests for changed or uncommitted production classes.
+  /generate all coverage 80      Generate tests for classes below the current threshold.
+  /generate <class> --show-logs  Stream live generation logs for Codex, validation, and JaCoCo.
+  /status                        Show the JaCoCo report summary and classes below threshold.
+  /doctor                        Check local Codex, build, and JaCoCo prerequisites.
+  /help                          Show interactive shell commands.
+  /exit                          Close JAIPilot.
 ```
 
 Direct commands:
@@ -82,6 +85,7 @@ jaipilot generate com.acme.OrderService
 jaipilot generate --changed
 jaipilot generate --coverage-below
 jaipilot generate --coverage-below 80
+jaipilot generate com.acme.OrderService --show-logs
 jaipilot status
 jaipilot status --threshold 90
 jaipilot doctor
@@ -104,6 +108,7 @@ Each generation run prints:
 
 - a queue table showing target classes, coverage, and current test state
 - live progress for Codex, validation, and JaCoCo phases
+- optional streamed process logs with `--show-logs`
 - the generated or updated test path
 - per-class token usage and optional estimated cost
 - per-class JaCoCo coverage deltas when available

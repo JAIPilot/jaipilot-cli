@@ -63,6 +63,12 @@ public final class GenerateCommand implements Callable<Integer> {
     )
     private String model;
 
+    @Option(
+            names = "--show-logs",
+            description = "Stream Codex, validation, and JaCoCo logs during generation."
+    )
+    private boolean showLogs;
+
     @Spec
     private CommandSpec spec;
 
@@ -117,6 +123,7 @@ public final class GenerateCommand implements Callable<Integer> {
         metadata.put("agent", agent.toLowerCase());
         metadata.put("target mode", targetModeDescription());
         metadata.put("targets", String.valueOf(targets.size()));
+        metadata.put("logs", showLogs ? "live" : "summary");
         ui.printKeyValues(metadata);
         if (baselineSnapshot == null) {
             ui.warn("Coverage baseline unavailable. Run JaCoCo once to compare before and after totals.");
@@ -153,7 +160,7 @@ public final class GenerateCommand implements Callable<Integer> {
                     ui.formatTestState(Files.isRegularFile(descriptor.testPath()))
             );
             try {
-                CodexCliUnitTestGenerator.GenerationResult result = generator.generate(descriptor, model, ui);
+                CodexCliUnitTestGenerator.GenerationResult result = generator.generate(descriptor, model, ui, showLogs, out);
                 printClassResult(out, ui, result);
                 totalUsage = totalUsage.plus(result.usage());
                 if (result.estimatedCost().available()) {
