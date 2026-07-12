@@ -40,6 +40,7 @@ Update this file when any of these change:
 - Gradle wrapper is preferred only when `gradlew` and `gradle/wrapper/gradle-wrapper.properties` both exist.
 - Default coverage threshold is `80%`.
 - Codex is expected to determine the final test file path and class name from repository conventions.
+- Codex is expected to own the test-run, fix, and coverage loop during generation.
 - The interactive shell stores history at `~/.jaipilot/history`.
 - The CLI UX favors structured sections, tables, coverage meters, and spinners over raw tool logs.
 - Coverage discovery currently looks for JaCoCo XML reports under:

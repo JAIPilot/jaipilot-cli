@@ -66,7 +66,7 @@ public final class DoctorCommand implements Callable<Integer> {
                                 : ui.badge(TerminalUi.Tone.SUCCESS, "ready"), codexVersion),
                         java.util.List.of("Build wrapper", "unavailable".equals(buildWrapper) ? ui.badge(TerminalUi.Tone.WARN, "optional")
                                 : ui.badge(TerminalUi.Tone.SUCCESS, "ready"), "unavailable".equals(buildWrapper)
-                                ? "generation still works, but validation and JaCoCo are skipped when no usable wrapper is available"
+                                ? "generation still works, but Codex may be limited in local test and coverage checks"
                                 : buildWrapper),
                         java.util.List.of("JaCoCo config", jacocoConfigured ? ui.badge(TerminalUi.Tone.SUCCESS, "ready")
                                 : ui.badge(TerminalUi.Tone.WARN, "missing"), jacocoConfigured ? "jacoco detected in build files"

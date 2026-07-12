@@ -164,27 +164,6 @@ public final class JavaProjectService {
         return detectBuildTool(projectRoot).supportsCoverage(projectRoot);
     }
 
-    public Optional<List<String>> buildProjectCoverageCommand(Path projectRoot) {
-        BuildTool buildTool = detectBuildTool(projectRoot);
-        if (!buildTool.supportsCoverage(projectRoot)) {
-            return Optional.empty();
-        }
-        return buildTool.projectCoverageCommand(projectRoot);
-    }
-
-    public Optional<List<String>> buildValidationCommand(JavaTestDescriptor descriptor) {
-        BuildTool buildTool = detectBuildTool(descriptor.moduleRoot());
-        return buildTool.testCommand(descriptor);
-    }
-
-    public Optional<List<String>> buildCoverageCommand(JavaTestDescriptor descriptor) {
-        BuildTool buildTool = detectBuildTool(descriptor.moduleRoot());
-        if (!buildTool.supportsCoverage(descriptor.moduleRoot())) {
-            return Optional.empty();
-        }
-        return buildTool.coverageCommand(descriptor);
-    }
-
     private List<String> changedPaths(Path projectRoot) {
         try {
             ProcessExecutor processExecutor = new ProcessExecutor();
@@ -354,24 +333,6 @@ public final class JavaProjectService {
     public enum BuildTool {
         MAVEN("maven") {
             @Override
-            Optional<List<String>> testCommand(JavaTestDescriptor descriptor) {
-                return wrapperCommand(descriptor.moduleRoot())
-                        .map(executable -> List.of(executable, "-Dtest=" + descriptor.className(), "test"));
-            }
-
-            @Override
-            Optional<List<String>> coverageCommand(JavaTestDescriptor descriptor) {
-                return wrapperCommand(descriptor.moduleRoot())
-                        .map(executable -> List.of(executable, "-Dtest=" + descriptor.className(), "test", "jacoco:report"));
-            }
-
-            @Override
-            Optional<List<String>> projectCoverageCommand(Path projectRoot) {
-                return wrapperCommand(projectRoot)
-                        .map(executable -> List.of(executable, "test", "jacoco:report"));
-            }
-
-            @Override
             Optional<String> wrapperCommand(Path projectRoot) {
                 return Files.isRegularFile(projectRoot.resolve("mvnw"))
                         && Files.isExecutable(projectRoot.resolve("mvnw"))
@@ -381,24 +342,6 @@ public final class JavaProjectService {
             }
         },
         GRADLE("gradle") {
-            @Override
-            Optional<List<String>> testCommand(JavaTestDescriptor descriptor) {
-                return wrapperCommand(descriptor.moduleRoot())
-                        .map(executable -> List.of(executable, "test", "--tests", descriptor.fullyQualifiedName()));
-            }
-
-            @Override
-            Optional<List<String>> coverageCommand(JavaTestDescriptor descriptor) {
-                return wrapperCommand(descriptor.moduleRoot())
-                        .map(executable -> List.of(executable, "test", "jacocoTestReport", "--tests", descriptor.fullyQualifiedName()));
-            }
-
-            @Override
-            Optional<List<String>> projectCoverageCommand(Path projectRoot) {
-                return wrapperCommand(projectRoot)
-                        .map(executable -> List.of(executable, "test", "jacocoTestReport"));
-            }
-
             @Override
             Optional<String> wrapperCommand(Path projectRoot) {
                 return Files.isRegularFile(projectRoot.resolve("gradlew"))
@@ -419,8 +362,6 @@ public final class JavaProjectService {
             return displayName;
         }
 
-        abstract Optional<List<String>> testCommand(JavaTestDescriptor descriptor);
-
         boolean supportsCoverage(Path moduleRoot) {
             try (var paths = Files.walk(moduleRoot, 2)) {
                 return paths
@@ -440,10 +381,6 @@ public final class JavaProjectService {
                 throw new IllegalStateException("Failed to inspect build files under " + moduleRoot, exception);
             }
         }
-
-        abstract Optional<List<String>> coverageCommand(JavaTestDescriptor descriptor);
-
-        abstract Optional<List<String>> projectCoverageCommand(Path projectRoot);
 
         abstract Optional<String> wrapperCommand(Path projectRoot);
     }

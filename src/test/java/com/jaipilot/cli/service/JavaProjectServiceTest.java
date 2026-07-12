@@ -68,14 +68,10 @@ class JavaProjectServiceTest {
         assertEquals("com.example.LegacyService", belowThreshold.get(0).fullyQualifiedName());
         assertTrue(service.supportsCoverage(projectRoot));
         assertEquals("./mvnw", service.resolveBuildWrapper(projectRoot).orElseThrow());
-        assertEquals(
-                List.of("./mvnw", "test", "jacoco:report"),
-                service.buildProjectCoverageCommand(projectRoot).orElseThrow()
-        );
     }
 
     @Test
-    void buildCommandsAreOptionalWhenWrapperIsMissing() throws Exception {
+    void wrapperIsOptionalWhenWrapperIsMissing() throws Exception {
         Path projectRoot = tempDir.resolve("sample-no-wrapper");
         Files.createDirectories(projectRoot);
         Files.writeString(projectRoot.resolve("pom.xml"), "<project/>");
@@ -84,21 +80,12 @@ class JavaProjectServiceTest {
 
         CoverageReportService coverageReportService = new CoverageReportService();
         JavaProjectService service = new JavaProjectService(new ProjectFileService(), coverageReportService);
-        JavaProjectService.JavaTestDescriptor testDescriptor = new JavaProjectService.JavaTestDescriptor(
-                projectRoot,
-                projectRoot.resolve("src/test/java/com/example/OrderServiceTest.java"),
-                "com.example",
-                "OrderServiceTest",
-                "com.example.OrderServiceTest"
-        );
 
         assertTrue(service.resolveBuildWrapper(projectRoot).isEmpty());
-        assertTrue(service.buildValidationCommand(testDescriptor).isEmpty());
-        assertTrue(service.buildProjectCoverageCommand(projectRoot).isEmpty());
     }
 
     @Test
-    void buildCommandsAreOptionalWhenWrapperMetadataIsMissing() throws Exception {
+    void wrapperIsOptionalWhenWrapperMetadataIsMissing() throws Exception {
         Path projectRoot = tempDir.resolve("sample-incomplete-wrapper");
         Files.createDirectories(projectRoot);
         Files.writeString(projectRoot.resolve("pom.xml"), "<project/>");
@@ -108,17 +95,8 @@ class JavaProjectServiceTest {
 
         CoverageReportService coverageReportService = new CoverageReportService();
         JavaProjectService service = new JavaProjectService(new ProjectFileService(), coverageReportService);
-        JavaProjectService.JavaTestDescriptor testDescriptor = new JavaProjectService.JavaTestDescriptor(
-                projectRoot,
-                projectRoot.resolve("src/test/java/com/example/OrderServiceTest.java"),
-                "com.example",
-                "OrderServiceTest",
-                "com.example.OrderServiceTest"
-        );
 
         assertTrue(service.resolveBuildWrapper(projectRoot).isEmpty());
-        assertTrue(service.buildValidationCommand(testDescriptor).isEmpty());
-        assertTrue(service.buildProjectCoverageCommand(projectRoot).isEmpty());
     }
 
     @Test

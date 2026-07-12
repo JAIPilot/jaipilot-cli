@@ -3,7 +3,6 @@ package com.jaipilot.cli.commands;
 import com.jaipilot.cli.service.CodexCliUnitTestGenerator;
 import com.jaipilot.cli.service.CoverageReportService;
 import com.jaipilot.cli.service.JavaProjectService;
-import com.jaipilot.cli.service.ProcessExecutor;
 import com.jaipilot.cli.service.ProjectFileService;
 import com.jaipilot.cli.ui.TerminalUi;
 import java.io.IOException;
@@ -11,7 +10,6 @@ import java.io.PrintWriter;
 import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,8 +32,6 @@ import picocli.CommandLine.Spec;
         description = "Generates Java unit tests locally using Codex."
 )
 public final class GenerateCommand implements Callable<Integer> {
-
-    private static final Duration PROJECT_COVERAGE_TIMEOUT = Duration.ofMinutes(20);
 
     @Parameters(
             index = "0",
@@ -76,7 +72,7 @@ public final class GenerateCommand implements Callable<Integer> {
 
     @Option(
             names = "--show-logs",
-            description = "Stream Codex, validation, and JaCoCo logs during generation."
+            description = "Stream live Codex logs during generation."
     )
     private boolean showLogs;
 
@@ -87,7 +83,6 @@ public final class GenerateCommand implements Callable<Integer> {
     private final JavaProjectService projectService;
     private final CoverageReportService coverageReportService;
     private final CodexCliUnitTestGenerator generator;
-    private final ProcessExecutor processExecutor;
 
     public GenerateCommand() {
         this(new ProjectFileService(), new CoverageReportService());
@@ -98,7 +93,6 @@ public final class GenerateCommand implements Callable<Integer> {
         this.projectService = new JavaProjectService(fileService, coverageReportService);
         this.coverageReportService = coverageReportService;
         this.generator = new CodexCliUnitTestGenerator(fileService, projectService);
-        this.processExecutor = new ProcessExecutor();
     }
 
     @Override
@@ -126,7 +120,7 @@ public final class GenerateCommand implements Callable<Integer> {
         CoverageReportService.CoverageSnapshot baselineSnapshot = coverageReportService.readProjectSnapshot(projectRoot)
                 .orElse(null);
 
-        ui.printBanner("Generating Java tests locally with Codex and JaCoCo");
+        ui.printBanner("Generating Java tests locally with Codex");
         LinkedHashMap<String, String> metadata = new LinkedHashMap<>();
         metadata.put("project", projectRoot.toString());
         metadata.put("agent", agent.toLowerCase());
@@ -136,7 +130,7 @@ public final class GenerateCommand implements Callable<Integer> {
         metadata.put("logs", showLogs ? "live" : "summary");
         ui.printKeyValues(metadata);
         if (baselineSnapshot == null) {
-            ui.warn("Coverage baseline unavailable. Run JaCoCo once to compare before and after totals.");
+            ui.warn("Coverage baseline unavailable. JAIPilot will read any JaCoCo report that Codex refreshes during the run.");
         } else {
             ui.section("Baseline");
             ui.printCoverageMeter("line", baselineSnapshot.totalLineCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD);
@@ -152,9 +146,8 @@ public final class GenerateCommand implements Callable<Integer> {
                 ? runParallelGeneration(projectRoot, targets, baselineSnapshot, model, ui, errUi, out)
                 : runSequentialGeneration(targets, baselineSnapshot, model, ui, errUi, out);
 
-        CoverageReportService.CoverageSnapshot finalSnapshot = runSummary.successCount() > 0
-                ? refreshProjectCoverage(projectRoot, ui, out)
-                : coverageReportService.readProjectSnapshot(projectRoot).orElse(null);
+        CoverageReportService.CoverageSnapshot finalSnapshot = coverageReportService.readProjectSnapshot(projectRoot)
+                .orElse(null);
         ui.section("Run Summary");
         LinkedHashMap<String, String> summary = new LinkedHashMap<>();
         summary.put("successful classes", String.valueOf(runSummary.successCount()));
@@ -347,45 +340,6 @@ public final class GenerateCommand implements Callable<Integer> {
             Throwable cause = exception.getCause() == null ? exception : exception.getCause();
             throw new IllegalStateException("Parallel generation failed unexpectedly.", cause);
         }
-    }
-
-    private CoverageReportService.CoverageSnapshot refreshProjectCoverage(
-            Path projectRoot,
-            TerminalUi ui,
-            PrintWriter out
-    ) {
-        ui.section("Coverage Refresh");
-        var coverageCommand = projectService.buildProjectCoverageCommand(projectRoot);
-        if (coverageCommand.isEmpty()) {
-            ui.warn("Skipped final coverage refresh because no project-level JaCoCo task was detected.");
-            return coverageReportService.readProjectSnapshot(projectRoot).orElse(null);
-        }
-        try {
-            if (showLogs) {
-                out.printf("%s %s%n", ui.badge(TerminalUi.Tone.PRIMARY, "summary"), formatCommand(coverageCommand.get()));
-                out.flush();
-            }
-            ProcessExecutor.ExecutionResult result = processExecutor.execute(
-                    coverageCommand.get(),
-                    projectRoot,
-                    PROJECT_COVERAGE_TIMEOUT,
-                    showLogs,
-                    out,
-                    null,
-                    showLogs ? ProcessExecutor.ProgressListener.noOp() : ui.spinner("refreshing full-project JaCoCo coverage")
-            );
-            if (result.timedOut()) {
-                ui.warn("Final project coverage refresh timed out.");
-            } else if (result.exitCode() != 0) {
-                ui.warn("Final project coverage refresh failed.");
-                if (!showLogs) {
-                    ui.info(tail(result.output()));
-                }
-            }
-        } catch (Exception exception) {
-            ui.warn("Final project coverage refresh failed: " + exception.getMessage());
-        }
-        return coverageReportService.readProjectSnapshot(projectRoot).orElse(null);
     }
 
     private List<JavaProjectService.JavaClassDescriptor> resolveTargets(Path projectRoot) {
@@ -641,26 +595,6 @@ public final class GenerateCommand implements Callable<Integer> {
 
     private String sanitizeFileName(String value) {
         return value.replaceAll("[^A-Za-z0-9._-]", "_");
-    }
-
-    private String formatCommand(List<String> command) {
-        return command.stream()
-                .map(this::quoteIfNeeded)
-                .reduce((left, right) -> left + " " + right)
-                .orElse("");
-    }
-
-    private String quoteIfNeeded(String value) {
-        if (value.indexOf(' ') < 0 && value.indexOf('\t') < 0) {
-            return value;
-        }
-        return "\"" + value.replace("\"", "\\\"") + "\"";
-    }
-
-    private String tail(String output) {
-        List<String> lines = output == null ? List.of() : output.lines().toList();
-        int start = Math.max(0, lines.size() - 40);
-        return String.join(System.lineSeparator(), lines.subList(start, lines.size()));
     }
 
     private record RunSummary(

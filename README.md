@@ -17,7 +17,7 @@
 
 `jaipilot-cli` is a Java-only local workflow. It does not call any custom backend or hosted service. Test generation comes from the coding agent you already use, starting with `codex`.
 
-JAIPilot does not require a globally installed Maven or Gradle at runtime. It only uses a usable repo-local `mvnw` or `gradlew` when the wrapper script and wrapper properties are both present. If the wrapper is missing or incomplete, JAIPilot still generates tests with Codex and skips local validation and JaCoCo.
+JAIPilot does not require a globally installed Maven or Gradle at runtime. Codex is expected to run tests and coverage itself when the repository has usable local build tooling. JAIPilot only reads the resulting files after the run.
 
 ## Features
 
@@ -35,7 +35,7 @@ JAIPilot does not require a globally installed Maven or Gradle at runtime. It on
 
 - Java 17+
 - `codex` installed and already authenticated locally
-- Optional: a usable repo-local `mvnw` or `gradlew` if you want automatic local validation
+- Optional: a usable repo-local `mvnw` or `gradlew` if you want Codex to self-check tests and coverage locally
 - Optional: JaCoCo configured in the project build if you want coverage and `status`
 - Optional: a SonarQube or SonarQube Cloud project if you want code-smell and quality-gate analysis for this repository
 
@@ -87,7 +87,7 @@ The workflow runs automatically on pushes to `main`, can be triggered manually w
 Run bare `jaipilot` to open the interactive shell:
 
 ```text
-JAIPilot 1.0.9
+JAIPilot 1.0.10
 Interactive shell ready
 
 project           /path/to/repo
@@ -101,7 +101,7 @@ Press Tab to open suggestions and complete commands, options, thresholds, and Ja
   /generate <class>              Generate tests for one Java production class.
   /generate all changed          Generate tests for changed or uncommitted production classes.
   /generate all coverage 80      Generate tests for classes below the current threshold.
-  /generate <class> --show-logs  Stream live generation logs for Codex, validation, and JaCoCo.
+  /generate <class> --show-logs  Stream live Codex logs during generation.
   /status                        Show the JaCoCo report summary and classes below threshold.
   /doctor                        Check local Codex, build, and JaCoCo prerequisites.
   /help                          Show interactive shell commands.
@@ -138,13 +138,13 @@ The default threshold is `80%`.
 Each generation run prints:
 
 - a queue table showing target classes, coverage, and current test state
-- live progress for Codex, validation, and JaCoCo phases
+- live progress for Codex generation
 - optional streamed process logs with `--show-logs`, including readable Codex event logs instead of raw JSON
 - isolated parallel workers for batch modes, with per-class log prefixes so concurrent output stays readable
 - the generated or updated test path
 - per-class token usage
-- per-class JaCoCo coverage deltas when available
-- a final run summary with total usage, a fresh whole-project coverage improvement report, and remaining below-threshold classes
+- per-class JaCoCo coverage deltas when a refreshed report is available after the Codex run
+- a final run summary with total usage, the currently available whole-project coverage report, and remaining below-threshold classes
 
 ## Codex Memory Files
 
@@ -170,8 +170,8 @@ JAIPilot fills that template with source-class context at runtime.
 1. JAIPilot resolves one or more Java production classes from your input.
 2. For batch modes, it copies the project into isolated temporary sandboxes so multiple Codex runs can proceed in parallel without sharing build output or coverage state.
 3. It asks `codex` to create or update the appropriate JUnit test based on the repository's own conventions.
-4. It runs the module test command locally.
-5. It runs JaCoCo coverage for the target class when available, then refreshes whole-project coverage before printing the final summary.
+4. Codex is responsible for running tests, fixing failures, and refreshing coverage until the target class is green and meets the threshold.
+5. JAIPilot reads the resulting test files and any JaCoCo report that exists after the run, then prints the final summary.
 
 ## License
 
