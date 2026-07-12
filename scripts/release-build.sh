@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 set -eu
-# ./scripts/release-build.sh --version 0.3.2 --push
+# ./scripts/release-build.sh --version 1.0.0 --push
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 POM_FILE="$REPO_ROOT/pom.xml"
@@ -19,7 +19,7 @@ Prepares a new JAIPilot release by:
   4. Creating a release commit (including current worktree changes) and annotated git tag.
 
 Options:
-  --version <version>  Release version such as 0.3.2.
+  --version <version>  Release version such as 1.0.0.
   --push               Push main and the release tag to origin after tagging.
   -h, --help           Show this help text.
 EOF
@@ -35,7 +35,7 @@ require_command() {
 }
 
 validate_version() {
-  printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "Version must look like 0.3.2"
+  printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "Version must look like 1.0.0"
 }
 
 current_version() {

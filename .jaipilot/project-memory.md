@@ -39,13 +39,9 @@ Update this file when any of these change:
 - Maven wrapper is preferred when `mvnw` exists.
 - Gradle wrapper is preferred when `gradlew` exists.
 - Default coverage threshold is `80%`.
+- Codex is expected to determine the final test file path and class name from repository conventions.
 - The interactive shell stores history at `~/.jaipilot/history`.
 - The CLI UX favors structured sections, tables, coverage meters, and spinners over raw tool logs.
 - Coverage discovery currently looks for JaCoCo XML reports under:
   - `target/site/jacoco/jacoco.xml`
   - `build/reports/jacoco/**/jacoco.xml`
-- Optional estimated-cost reporting is driven by:
-  - `JAIPILOT_CODEX_INPUT_COST_PER_MILLION_USD`
-  - `JAIPILOT_CODEX_CACHED_INPUT_COST_PER_MILLION_USD`
-  - `JAIPILOT_CODEX_OUTPUT_COST_PER_MILLION_USD`
-  - `JAIPILOT_CODEX_REASONING_OUTPUT_COST_PER_MILLION_USD`

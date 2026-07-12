@@ -4,7 +4,6 @@ import com.jaipilot.cli.service.CoverageReportService;
 import com.jaipilot.cli.service.JavaProjectService;
 import com.jaipilot.cli.service.ProjectFileService;
 import com.jaipilot.cli.ui.TerminalUi;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -94,7 +93,7 @@ public final class StatusCommand implements Callable<Integer> {
                     descriptor.fullyQualifiedName(),
                     ui.formatCoverage(lineCoverage, threshold),
                     ui.formatCoverage(branchCoverage, threshold),
-                    ui.formatTestState(Files.isRegularFile(descriptor.testPath()))
+                    ui.formatTestState(projectService.hasLikelyTests(descriptor))
             ));
         }
         ui.printTable(List.of("Class", "Line", "Branch", "Tests"), rows);

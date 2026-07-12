@@ -125,10 +125,6 @@ public final class GenerateCommand implements Callable<Integer> {
 
         CoverageReportService.CoverageSnapshot baselineSnapshot = coverageReportService.readProjectSnapshot(projectRoot)
                 .orElse(null);
-        int successCount = 0;
-        int failureCount = 0;
-        CodexCliUnitTestGenerator.AgentUsage totalUsage = CodexCliUnitTestGenerator.AgentUsage.zero();
-        List<String> failedClasses = new ArrayList<>();
 
         ui.printBanner("Generating Java tests locally with Codex and JaCoCo");
         LinkedHashMap<String, String> metadata = new LinkedHashMap<>();
@@ -155,38 +151,34 @@ public final class GenerateCommand implements Callable<Integer> {
         RunSummary runSummary = isParallelBatch(targets)
                 ? runParallelGeneration(projectRoot, targets, baselineSnapshot, model, ui, errUi, out)
                 : runSequentialGeneration(targets, baselineSnapshot, model, ui, errUi, out);
-        successCount = runSummary.successCount();
-        failureCount = runSummary.failureCount();
-        totalUsage = runSummary.totalUsage();
-        failedClasses = runSummary.failedClasses();
 
-        CoverageReportService.CoverageSnapshot finalSnapshot = successCount > 0
+        CoverageReportService.CoverageSnapshot finalSnapshot = runSummary.successCount() > 0
                 ? refreshProjectCoverage(projectRoot, ui, out)
                 : coverageReportService.readProjectSnapshot(projectRoot).orElse(null);
         ui.section("Run Summary");
         LinkedHashMap<String, String> summary = new LinkedHashMap<>();
-        summary.put("successful classes", String.valueOf(successCount));
-        summary.put("failed classes", String.valueOf(failureCount));
+        summary.put("successful classes", String.valueOf(runSummary.successCount()));
+        summary.put("failed classes", String.valueOf(runSummary.failureCount()));
         summary.put(
                 "total tokens",
                 "input=%d cached=%d output=%d reasoning=%d total=%d".formatted(
-                        totalUsage.inputTokens(),
-                        totalUsage.cachedInputTokens(),
-                        totalUsage.outputTokens(),
-                        totalUsage.reasoningOutputTokens(),
-                        totalUsage.totalTokens()
+                        runSummary.totalUsage().inputTokens(),
+                        runSummary.totalUsage().cachedInputTokens(),
+                        runSummary.totalUsage().outputTokens(),
+                        runSummary.totalUsage().reasoningOutputTokens(),
+                        runSummary.totalUsage().totalTokens()
                 )
         );
         ui.printKeyValues(summary);
-        if (!failedClasses.isEmpty()) {
+        if (!runSummary.failedClasses().isEmpty()) {
             ui.printTable(
                     List.of("Failed class"),
-                    failedClasses.stream().map(value -> List.of(value)).toList()
+                    runSummary.failedClasses().stream().map(value -> List.of(value)).toList()
             );
         }
         printCoverageSummary(ui, baselineSnapshot, finalSnapshot);
         printRemainingThresholdFailures(ui, projectRoot, finalSnapshot);
-        return failureCount == 0 ? CommandLine.ExitCode.OK : CommandLine.ExitCode.SOFTWARE;
+        return runSummary.failureCount() == 0 ? CommandLine.ExitCode.OK : CommandLine.ExitCode.SOFTWARE;
     }
 
     private RunSummary runSequentialGeneration(
@@ -217,7 +209,7 @@ public final class GenerateCommand implements Callable<Integer> {
                         true,
                         out
                 );
-                printClassResult(out, ui, rebaseResult(descriptor, result, baselineClassCoverage));
+                printClassResult(out, ui, normalizeResult(result.outputPath(), result, baselineClassCoverage));
                 totalUsage = totalUsage.plus(result.usage());
                 successCount++;
             } catch (Exception exception) {
@@ -270,9 +262,9 @@ public final class GenerateCommand implements Callable<Integer> {
                         : baselineSnapshot.classCoverage(outcome.descriptor().fullyQualifiedName()).orElse(null);
                 printClassContext(out, ui, outcome.descriptor(), baselineClassCoverage, completedCount, targets.size());
                 if (outcome.success()) {
-                    fileService.writeFile(outcome.descriptor().testPath(), outcome.generatedTestContent());
-                    CodexCliUnitTestGenerator.GenerationResult mergedResult = rebaseResult(
-                            outcome.descriptor(),
+                    fileService.writeFile(outcome.result().outputPath(), outcome.generatedTestContent());
+                    CodexCliUnitTestGenerator.GenerationResult mergedResult = normalizeResult(
+                            outcome.result().outputPath(),
                             outcome.result(),
                             baselineClassCoverage
                     );
@@ -326,10 +318,11 @@ public final class GenerateCommand implements Callable<Integer> {
                     false,
                     workerWriter
             );
+            Path projectOutputPath = projectRoot.resolve(sandboxRoot.relativize(result.outputPath())).normalize();
             return GenerationOutcome.success(
                     descriptor,
-                    result,
-                    fileService.readFile(sandboxDescriptor.testPath())
+                    rebaseOutputPath(projectOutputPath, result),
+                    fileService.readFile(result.outputPath())
             );
         } catch (Exception exception) {
             String message = exception.getMessage() == null || exception.getMessage().isBlank()
@@ -433,7 +426,7 @@ public final class GenerateCommand implements Callable<Integer> {
                     descriptor.fullyQualifiedName(),
                     ui.formatCoverage(coverage == null ? null : coverage.lineCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
                     ui.formatCoverage(coverage == null ? null : coverage.branchCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
-                    ui.formatTestState(Files.isRegularFile(descriptor.testPath()))
+                    formatTestState(descriptor, ui)
             ));
         }
         return rows;
@@ -491,7 +484,6 @@ public final class GenerateCommand implements Callable<Integer> {
                 ui.accent(descriptor.fullyQualifiedName())
         );
         out.printf("  %s %s%n", ui.highlight("source"), descriptor.cutPath());
-        out.printf("  %s %s%n", ui.highlight("target"), descriptor.testPath());
         out.printf(
                 "  %s line %s  branch %s  %s%n",
                 ui.highlight("baseline"),
@@ -499,18 +491,18 @@ public final class GenerateCommand implements Callable<Integer> {
                         StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
                 ui.formatCoverage(baselineClassCoverage == null ? null : baselineClassCoverage.branchCoverage(),
                         StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
-                ui.formatTestState(Files.isRegularFile(descriptor.testPath()))
+                formatTestState(descriptor, ui)
         );
     }
 
-    private CodexCliUnitTestGenerator.GenerationResult rebaseResult(
-            JavaProjectService.JavaClassDescriptor descriptor,
+    private CodexCliUnitTestGenerator.GenerationResult normalizeResult(
+            Path outputPath,
             CodexCliUnitTestGenerator.GenerationResult result,
             CoverageReportService.ClassCoverage baselineClassCoverage
     ) {
         if (!result.coverageDelta().available()) {
             return new CodexCliUnitTestGenerator.GenerationResult(
-                    descriptor.testPath(),
+                    outputPath,
                     result.usage(),
                     result.coverageDelta(),
                     result.testExistedBefore(),
@@ -518,13 +510,26 @@ public final class GenerateCommand implements Callable<Integer> {
             );
         }
         return new CodexCliUnitTestGenerator.GenerationResult(
-                descriptor.testPath(),
+                outputPath,
                 result.usage(),
                 new CodexCliUnitTestGenerator.CoverageDelta(
                         baselineClassCoverage,
                         result.coverageDelta().afterClassCoverage(),
                         null
                 ),
+                result.testExistedBefore(),
+                result.note()
+        );
+    }
+
+    private CodexCliUnitTestGenerator.GenerationResult rebaseOutputPath(
+            Path outputPath,
+            CodexCliUnitTestGenerator.GenerationResult result
+    ) {
+        return new CodexCliUnitTestGenerator.GenerationResult(
+                outputPath,
+                result.usage(),
+                result.coverageDelta(),
                 result.testExistedBefore(),
                 result.note()
         );
@@ -594,10 +599,14 @@ public final class GenerateCommand implements Callable<Integer> {
                     descriptor.fullyQualifiedName(),
                     ui.formatCoverage(coverage.lineCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
                     ui.formatCoverage(coverage.branchCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
-                    ui.formatTestState(Files.isRegularFile(descriptor.testPath()))
+                    formatTestState(descriptor, ui)
             ));
         }
         ui.printTable(List.of("Class", "Line", "Branch", "Tests"), rows);
+    }
+
+    private String formatTestState(JavaProjectService.JavaClassDescriptor descriptor, TerminalUi ui) {
+        return ui.formatTestState(projectService.hasLikelyTests(descriptor));
     }
 
     private String targetModeDescription() {

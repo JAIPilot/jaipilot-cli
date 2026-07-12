@@ -12,9 +12,12 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public final class JavaProjectService {
+
+    private static final Pattern PACKAGE_DECLARATION = Pattern.compile("(?m)^\\s*package\\s+([\\w.]+)\\s*;");
 
     private final ProjectFileService fileService;
     private final CoverageReportService coverageReportService;
@@ -121,16 +124,44 @@ public final class JavaProjectService {
                 .collect(Collectors.toList()));
     }
 
-    public boolean supportsCoverage(Path projectRoot) {
-        return detectBuildTool(projectRoot).supportsCoverage(projectRoot);
+    public boolean hasLikelyTests(JavaClassDescriptor descriptor) {
+        return Files.isRegularFile(conventionalTestPath(descriptor)) || !findLikelyTests(descriptor).isEmpty();
     }
 
-    public Optional<List<String>> buildCoverageCommand(JavaClassDescriptor descriptor) {
-        BuildTool buildTool = detectBuildTool(descriptor.moduleRoot());
-        if (!buildTool.supportsCoverage(descriptor.moduleRoot())) {
-            return Optional.empty();
+    public List<JavaTestDescriptor> findLikelyTests(JavaClassDescriptor descriptor) {
+        List<ScoredTestDescriptor> candidates = scanTestDescriptors(descriptor.moduleRoot()).stream()
+                .map(candidate -> new ScoredTestDescriptor(candidate, scoreTestCandidate(descriptor, candidate)))
+                .filter(candidate -> candidate.score() > 0)
+                .sorted()
+                .toList();
+        return candidates.stream().map(ScoredTestDescriptor::descriptor).toList();
+    }
+
+    public List<JavaTestDescriptor> findTouchedTests(
+            JavaClassDescriptor descriptor,
+            Map<Path, ProjectFileService.FileFingerprint> beforeSnapshot
+    ) {
+        Map<Path, ProjectFileService.FileFingerprint> afterSnapshot = fileService.snapshotJavaTestFiles(descriptor.moduleRoot());
+        List<JavaTestDescriptor> touchedTests = new ArrayList<>();
+        for (Map.Entry<Path, ProjectFileService.FileFingerprint> entry : afterSnapshot.entrySet()) {
+            ProjectFileService.FileFingerprint before = beforeSnapshot.get(entry.getKey());
+            if (entry.getValue().equals(before)) {
+                continue;
+            }
+            touchedTests.add(describeTestClass(entry.getKey(), descriptor.projectRoot()));
         }
-        return buildTool.coverageCommand(descriptor);
+        if (touchedTests.size() <= 1) {
+            return touchedTests;
+        }
+        return touchedTests.stream()
+                .map(candidate -> new ScoredTestDescriptor(candidate, scoreTestCandidate(descriptor, candidate)))
+                .sorted()
+                .map(ScoredTestDescriptor::descriptor)
+                .toList();
+    }
+
+    public boolean supportsCoverage(Path projectRoot) {
+        return detectBuildTool(projectRoot).supportsCoverage(projectRoot);
     }
 
     public Optional<List<String>> buildProjectCoverageCommand(Path projectRoot) {
@@ -141,9 +172,17 @@ public final class JavaProjectService {
         return buildTool.projectCoverageCommand(projectRoot);
     }
 
-    public Optional<List<String>> buildValidationCommand(JavaClassDescriptor descriptor) {
+    public Optional<List<String>> buildValidationCommand(JavaTestDescriptor descriptor) {
         BuildTool buildTool = detectBuildTool(descriptor.moduleRoot());
         return buildTool.testCommand(descriptor);
+    }
+
+    public Optional<List<String>> buildCoverageCommand(JavaTestDescriptor descriptor) {
+        BuildTool buildTool = detectBuildTool(descriptor.moduleRoot());
+        if (!buildTool.supportsCoverage(descriptor.moduleRoot())) {
+            return Optional.empty();
+        }
+        return buildTool.coverageCommand(descriptor);
     }
 
     private List<String> changedPaths(Path projectRoot) {
@@ -219,19 +258,30 @@ public final class JavaProjectService {
         }
         String className = fileService.stripJavaExtension(relative.getFileName().toString());
         String fullyQualifiedName = packageName.isBlank() ? className : packageName + "." + className;
-        Path testPath = moduleRoot.resolve("src/test/java").resolve(packagePath).resolve(className + "Test.java").normalize();
-        String testClassName = className + "Test";
-        String testFullyQualifiedName = packageName.isBlank() ? testClassName : packageName + "." + testClassName;
         return new JavaClassDescriptor(
                 projectRoot,
                 moduleRoot,
                 cutPath.normalize(),
                 packageName,
                 className,
-                fullyQualifiedName,
-                testPath,
-                testClassName,
-                testFullyQualifiedName
+                fullyQualifiedName
+        );
+    }
+
+    public JavaTestDescriptor describeTestClass(Path testPath, Path projectRoot) {
+        if (!Files.isRegularFile(testPath)) {
+            throw new IllegalStateException("Test file not found: " + testPath);
+        }
+        Path moduleRoot = Optional.ofNullable(fileService.findNearestBuildProjectRoot(testPath)).orElse(projectRoot);
+        String className = fileService.stripJavaExtension(testPath.getFileName().toString());
+        String packageName = readPackageName(testPath);
+        String fullyQualifiedName = packageName.isBlank() ? className : packageName + "." + className;
+        return new JavaTestDescriptor(
+                moduleRoot,
+                testPath.normalize(),
+                packageName,
+                className,
+                fullyQualifiedName
         );
     }
 
@@ -245,18 +295,74 @@ public final class JavaProjectService {
         return path.toString().replace('\\', '/');
     }
 
+    private List<JavaTestDescriptor> scanTestDescriptors(Path moduleRoot) {
+        List<JavaTestDescriptor> tests = new ArrayList<>();
+        try (var paths = Files.walk(moduleRoot)) {
+            paths.filter(Files::isRegularFile)
+                    .filter(this::isTestJavaPath)
+                    .forEach(path -> tests.add(describeTestClass(path, moduleRoot)));
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to scan Java test files under " + moduleRoot, exception);
+        }
+        return tests;
+    }
+
+    private boolean isTestJavaPath(Path path) {
+        String normalized = normalize(path);
+        return normalized.endsWith(".java") && normalized.contains("/src/test/java/");
+    }
+
+    private Path conventionalTestPath(JavaClassDescriptor descriptor) {
+        Path packagePath = descriptor.packageName().isBlank()
+                ? Path.of("")
+                : Path.of(descriptor.packageName().replace('.', '/'));
+        return descriptor.moduleRoot()
+                .resolve("src/test/java")
+                .resolve(packagePath)
+                .resolve(descriptor.className() + "Test.java")
+                .normalize();
+    }
+
+    private int scoreTestCandidate(JavaClassDescriptor sourceDescriptor, JavaTestDescriptor testDescriptor) {
+        int score = 0;
+        if (testDescriptor.className().equals(sourceDescriptor.className() + "Test")) {
+            score += 8;
+        } else if (testDescriptor.className().contains(sourceDescriptor.className())) {
+            score += 4;
+        }
+        if (testDescriptor.packageName().equals(sourceDescriptor.packageName())) {
+            score += 2;
+        }
+        String testContents = fileService.readFile(testDescriptor.testPath());
+        if (testContents.contains(sourceDescriptor.fullyQualifiedName())) {
+            score += 8;
+        } else if (containsWord(testContents, sourceDescriptor.className())) {
+            score += 3;
+        }
+        return score;
+    }
+
+    private boolean containsWord(String text, String word) {
+        return Pattern.compile("\\b" + Pattern.quote(word) + "\\b").matcher(text).find();
+    }
+
+    private String readPackageName(Path path) {
+        var matcher = PACKAGE_DECLARATION.matcher(fileService.readFile(path));
+        return matcher.find() ? matcher.group(1) : "";
+    }
+
     public enum BuildTool {
         MAVEN("maven") {
             @Override
-            Optional<List<String>> testCommand(JavaClassDescriptor descriptor) {
+            Optional<List<String>> testCommand(JavaTestDescriptor descriptor) {
                 return wrapperCommand(descriptor.moduleRoot())
-                        .map(executable -> List.of(executable, "-Dtest=" + descriptor.testClassName(), "test"));
+                        .map(executable -> List.of(executable, "-Dtest=" + descriptor.className(), "test"));
             }
 
             @Override
-            Optional<List<String>> coverageCommand(JavaClassDescriptor descriptor) {
+            Optional<List<String>> coverageCommand(JavaTestDescriptor descriptor) {
                 return wrapperCommand(descriptor.moduleRoot())
-                        .map(executable -> List.of(executable, "-Dtest=" + descriptor.testClassName(), "test", "jacoco:report"));
+                        .map(executable -> List.of(executable, "-Dtest=" + descriptor.className(), "test", "jacoco:report"));
             }
 
             @Override
@@ -274,15 +380,15 @@ public final class JavaProjectService {
         },
         GRADLE("gradle") {
             @Override
-            Optional<List<String>> testCommand(JavaClassDescriptor descriptor) {
+            Optional<List<String>> testCommand(JavaTestDescriptor descriptor) {
                 return wrapperCommand(descriptor.moduleRoot())
-                        .map(executable -> List.of(executable, "test", "--tests", descriptor.testFullyQualifiedName()));
+                        .map(executable -> List.of(executable, "test", "--tests", descriptor.fullyQualifiedName()));
             }
 
             @Override
-            Optional<List<String>> coverageCommand(JavaClassDescriptor descriptor) {
+            Optional<List<String>> coverageCommand(JavaTestDescriptor descriptor) {
                 return wrapperCommand(descriptor.moduleRoot())
-                        .map(executable -> List.of(executable, "test", "jacocoTestReport", "--tests", descriptor.testFullyQualifiedName()));
+                        .map(executable -> List.of(executable, "test", "jacocoTestReport", "--tests", descriptor.fullyQualifiedName()));
             }
 
             @Override
@@ -309,7 +415,7 @@ public final class JavaProjectService {
             return displayName;
         }
 
-        abstract Optional<List<String>> testCommand(JavaClassDescriptor descriptor);
+        abstract Optional<List<String>> testCommand(JavaTestDescriptor descriptor);
 
         boolean supportsCoverage(Path moduleRoot) {
             try (var paths = Files.walk(moduleRoot, 2)) {
@@ -331,7 +437,7 @@ public final class JavaProjectService {
             }
         }
 
-        abstract Optional<List<String>> coverageCommand(JavaClassDescriptor descriptor);
+        abstract Optional<List<String>> coverageCommand(JavaTestDescriptor descriptor);
 
         abstract Optional<List<String>> projectCoverageCommand(Path projectRoot);
 
@@ -344,10 +450,30 @@ public final class JavaProjectService {
             Path cutPath,
             String packageName,
             String className,
-            String fullyQualifiedName,
-            Path testPath,
-            String testClassName,
-            String testFullyQualifiedName
+            String fullyQualifiedName
     ) {
+    }
+
+    public record JavaTestDescriptor(
+            Path moduleRoot,
+            Path testPath,
+            String packageName,
+            String className,
+            String fullyQualifiedName
+    ) {
+    }
+
+    private record ScoredTestDescriptor(
+            JavaTestDescriptor descriptor,
+            int score
+    ) implements Comparable<ScoredTestDescriptor> {
+        @Override
+        public int compareTo(ScoredTestDescriptor other) {
+            int scoreCompare = Integer.compare(other.score, score);
+            if (scoreCompare != 0) {
+                return scoreCompare;
+            }
+            return descriptor.testPath().compareTo(other.descriptor.testPath());
+        }
     }
 }

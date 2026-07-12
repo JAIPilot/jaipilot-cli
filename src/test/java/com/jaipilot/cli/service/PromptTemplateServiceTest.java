@@ -19,7 +19,6 @@ class PromptTemplateServiceTest {
     void buildInitialPromptUsesSavedTemplateWithoutReadingUnusedPlaceholders() {
         Path projectRoot = tempDir.resolve("sample");
         Path sourcePath = projectRoot.resolve("src/main/java/com/example/OrderService.java");
-        Path testPath = projectRoot.resolve("src/test/java/com/example/OrderServiceTest.java");
 
         JavaProjectService.JavaClassDescriptor descriptor = new JavaProjectService.JavaClassDescriptor(
                 projectRoot,
@@ -27,21 +26,17 @@ class PromptTemplateServiceTest {
                 sourcePath,
                 "com.example",
                 "OrderService",
-                "com.example.OrderService",
-                testPath,
-                "OrderServiceTest",
-                "com.example.OrderServiceTest"
+                "com.example.OrderService"
         );
 
         String prompt = promptTemplateService.buildInitialPrompt(descriptor);
 
         assertTrue(prompt.contains("Generate or update JUnit tests for one Java production class."));
+        assertTrue(prompt.contains("Current class under test: `com.example.OrderService`"));
+        assertTrue(prompt.contains("Source file: `" + sourcePath + "`"));
         assertTrue(prompt.contains("Before editing, read these files if they exist:"));
         assertTrue(prompt.contains("isolated sandbox workspace in parallel"));
         assertTrue(prompt.contains("- After editing, stop and let JAIPilot run validation."));
-        assertFalse(prompt.contains(projectRoot.toString()));
-        assertFalse(prompt.contains(sourcePath.toString()));
-        assertFalse(prompt.contains(testPath.toString()));
         assertFalse(prompt.contains("package com.example; class OrderService {}"));
         assertFalse(prompt.contains("Target test class:"));
         assertFalse(prompt.contains("com.example.OrderServiceTest"));

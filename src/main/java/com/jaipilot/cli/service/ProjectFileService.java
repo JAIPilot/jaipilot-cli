@@ -9,7 +9,10 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.MessageDigest;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public final class ProjectFileService {
@@ -72,6 +75,18 @@ public final class ProjectFileService {
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to write file " + path, exception);
         }
+    }
+
+    public Map<Path, FileFingerprint> snapshotJavaTestFiles(Path root) {
+        Map<Path, FileFingerprint> snapshot = new LinkedHashMap<>();
+        try (var paths = Files.walk(root)) {
+            paths.filter(Files::isRegularFile)
+                    .filter(this::isJavaTestPath)
+                    .forEach(path -> snapshot.put(path.normalize(), fingerprint(path)));
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to scan Java test files under " + root, exception);
+        }
+        return snapshot;
     }
 
     public void copyProjectWorkspace(Path sourceRoot, Path destinationRoot) {
@@ -168,5 +183,34 @@ public final class ProjectFileService {
         return GRADLE_BUILD_FILES.stream()
                 .map(directory::resolve)
                 .anyMatch(Files::isRegularFile);
+    }
+
+    private boolean isJavaTestPath(Path path) {
+        String normalized = path.toString().replace('\\', '/');
+        return normalized.endsWith(".java") && normalized.contains("/src/test/java/");
+    }
+
+    private FileFingerprint fingerprint(Path path) {
+        try {
+            return new FileFingerprint(Files.size(path), sha256(Files.readAllBytes(path)));
+        } catch (Exception exception) {
+            throw new IllegalStateException("Failed to fingerprint file " + path, exception);
+        }
+    }
+
+    private String sha256(byte[] bytes) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] hash = digest.digest(bytes);
+        StringBuilder builder = new StringBuilder(hash.length * 2);
+        for (byte value : hash) {
+            builder.append(String.format("%02x", value));
+        }
+        return builder.toString();
+    }
+
+    public record FileFingerprint(
+            long size,
+            String sha256
+    ) {
     }
 }

@@ -57,7 +57,7 @@ jaipilot --version
 Run bare `jaipilot` to open the interactive shell:
 
 ```text
-JAIPilot 1.0.7
+JAIPilot 1.0.8
 Interactive shell ready
 
 project           /path/to/repo
@@ -99,7 +99,7 @@ jaipilot doctor
 - project root and JaCoCo report path
 - total line and branch coverage meters
 - a table of classes below the threshold
-- whether each class already has a corresponding test file
+- whether each class already appears to have a likely test
 
 The default threshold is `80%`.
 
@@ -133,13 +133,13 @@ The bundled Codex prompt templates now live in:
 
 - `src/main/resources/prompts/generate-java-tests.md`
 
-JAIPilot fills that template with class paths, source code, and existing test code at runtime.
+JAIPilot fills that template with source-class context at runtime.
 
 ## How It Works
 
 1. JAIPilot resolves one or more Java production classes from your input.
 2. For batch modes, it copies the project into isolated temporary sandboxes so multiple Codex runs can proceed in parallel without sharing build output or coverage state.
-3. It asks `codex` to create or update the corresponding JUnit test under `src/test/java`.
+3. It asks `codex` to create or update the appropriate JUnit test based on the repository's own conventions.
 4. It runs the module test command locally.
 5. It runs JaCoCo coverage for the target class when available, then refreshes whole-project coverage before printing the final summary.
 

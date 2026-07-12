@@ -1,6 +1,5 @@
 package com.jaipilot.cli.service;
 
-import java.nio.file.Files;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -23,11 +22,7 @@ public final class PromptTemplateService {
         putIfReferenced(values, "MODULE_ROOT", descriptor.moduleRoot().toString());
         putIfReferenced(values, "CLASS_UNDER_TEST", descriptor.fullyQualifiedName());
         putIfReferenced(values, "CLASS_FILE", descriptor.cutPath().toString());
-        putIfReferenced(values, "TARGET_TEST_FILE", descriptor.testPath().toString());
         putIfReferenced(values, "SOURCE_CONTENT", () -> fileService.readFile(descriptor.cutPath()));
-        putIfReferenced(values, "EXISTING_TEST_CONTENT", () -> Files.isRegularFile(descriptor.testPath())
-                ? fileService.readFile(descriptor.testPath())
-                : "");
         return render(initialTemplate, values);
     }
 

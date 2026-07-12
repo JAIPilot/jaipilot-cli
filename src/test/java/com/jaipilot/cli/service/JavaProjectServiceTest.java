@@ -81,11 +81,52 @@ class JavaProjectServiceTest {
 
         CoverageReportService coverageReportService = new CoverageReportService();
         JavaProjectService service = new JavaProjectService(new ProjectFileService(), coverageReportService);
-        JavaProjectService.JavaClassDescriptor descriptor = service.resolveClass(projectRoot, sourcePath.toString());
+        JavaProjectService.JavaTestDescriptor testDescriptor = new JavaProjectService.JavaTestDescriptor(
+                projectRoot,
+                projectRoot.resolve("src/test/java/com/example/OrderServiceTest.java"),
+                "com.example",
+                "OrderServiceTest",
+                "com.example.OrderServiceTest"
+        );
 
         assertTrue(service.resolveBuildWrapper(projectRoot).isEmpty());
-        assertTrue(service.buildValidationCommand(descriptor).isEmpty());
+        assertTrue(service.buildValidationCommand(testDescriptor).isEmpty());
         assertTrue(service.buildProjectCoverageCommand(projectRoot).isEmpty());
+    }
+
+    @Test
+    void hasLikelyTestsFindsNonConventionalTestNames() throws Exception {
+        Path projectRoot = tempDir.resolve("sample-nonconventional-tests");
+        Files.createDirectories(projectRoot);
+        Files.writeString(projectRoot.resolve("pom.xml"), "<project/>");
+        Path sourcePath = projectRoot.resolve("src/main/java/com/example/OrderService.java");
+        writeJava(sourcePath, "OrderService");
+        Path testPath = projectRoot.resolve("src/test/java/com/example/OrderServiceCoverageSpec.java");
+        Files.createDirectories(testPath.getParent());
+        Files.writeString(testPath, """
+                package com.example;
+
+                import org.junit.jupiter.api.Test;
+
+                class OrderServiceCoverageSpec {
+                    @Test
+                    void smoke() {
+                        new OrderService();
+                    }
+                }
+                """);
+
+        CoverageReportService coverageReportService = new CoverageReportService();
+        JavaProjectService service = new JavaProjectService(new ProjectFileService(), coverageReportService);
+        JavaProjectService.JavaClassDescriptor descriptor = service.resolveClass(projectRoot, sourcePath.toString());
+
+        assertTrue(service.hasLikelyTests(descriptor));
+        assertEquals(
+                List.of("com.example.OrderServiceCoverageSpec"),
+                service.findLikelyTests(descriptor).stream()
+                        .map(JavaProjectService.JavaTestDescriptor::fullyQualifiedName)
+                        .toList()
+        );
     }
 
     private void writeJava(Path path, String className) throws Exception {
