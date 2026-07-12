@@ -30,6 +30,9 @@ class JavaProjectServiceTest {
                   </build>
                 </project>
                 """);
+        Path mvnw = projectRoot.resolve("mvnw");
+        Files.writeString(mvnw, "#!/bin/sh\nexit 0\n");
+        mvnw.toFile().setExecutable(true, false);
         writeJava(projectRoot.resolve("src/main/java/com/example/OrderService.java"), "OrderService");
         writeJava(projectRoot.resolve("src/main/java/com/example/LegacyService.java"), "LegacyService");
         writeJava(projectRoot.resolve("src/test/java/com/example/OrderServiceTest.java"), "OrderServiceTest");
@@ -61,10 +64,28 @@ class JavaProjectServiceTest {
         assertEquals(1, belowThreshold.size());
         assertEquals("com.example.LegacyService", belowThreshold.get(0).fullyQualifiedName());
         assertTrue(service.supportsCoverage(projectRoot));
+        assertEquals("./mvnw", service.resolveBuildWrapper(projectRoot).orElseThrow());
         assertEquals(
-                List.of("mvn", "test", "jacoco:report"),
+                List.of("./mvnw", "test", "jacoco:report"),
                 service.buildProjectCoverageCommand(projectRoot).orElseThrow()
         );
+    }
+
+    @Test
+    void buildCommandsAreOptionalWhenWrapperIsMissing() throws Exception {
+        Path projectRoot = tempDir.resolve("sample-no-wrapper");
+        Files.createDirectories(projectRoot);
+        Files.writeString(projectRoot.resolve("pom.xml"), "<project/>");
+        Path sourcePath = projectRoot.resolve("src/main/java/com/example/OrderService.java");
+        writeJava(sourcePath, "OrderService");
+
+        CoverageReportService coverageReportService = new CoverageReportService();
+        JavaProjectService service = new JavaProjectService(new ProjectFileService(), coverageReportService);
+        JavaProjectService.JavaClassDescriptor descriptor = service.resolveClass(projectRoot, sourcePath.toString());
+
+        assertTrue(service.resolveBuildWrapper(projectRoot).isEmpty());
+        assertTrue(service.buildValidationCommand(descriptor).isEmpty());
+        assertTrue(service.buildProjectCoverageCommand(projectRoot).isEmpty());
     }
 
     private void writeJava(Path path, String className) throws Exception {

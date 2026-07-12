@@ -17,6 +17,8 @@
 
 `jaipilot-cli` is a Java-only local workflow. It does not call any custom backend or hosted service. Test generation comes from the coding agent you already use, starting with `codex`.
 
+JAIPilot does not require a globally installed Maven or Gradle at runtime. It only uses a repo-local `mvnw` or `gradlew` when present. If a wrapper is missing, JAIPilot still generates tests with Codex and skips local validation and JaCoCo.
+
 ## Features
 
 - JLine-powered interactive shell with command history, visible Tab completion menus, and inline history suggestions
@@ -32,9 +34,9 @@
 ## Prerequisites
 
 - Java 17+
-- Maven or Gradle project
-- JaCoCo configured in the project build
 - `codex` installed and already authenticated locally
+- Optional: a repo-local `mvnw` or `gradlew` if you want automatic local validation
+- Optional: JaCoCo configured in the project build if you want coverage and `status`
 
 ## Install
 
@@ -55,7 +57,7 @@ jaipilot --version
 Run bare `jaipilot` to open the interactive shell:
 
 ```text
-JAIPilot 1.0.5
+JAIPilot 1.0.6
 Interactive shell ready
 
 project           /path/to/repo

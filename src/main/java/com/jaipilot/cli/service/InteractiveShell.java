@@ -39,7 +39,9 @@ public final class InteractiveShell {
         TerminalUi ui = new TerminalUi(out);
         ui.printShellWelcome(
                 projectRoot.toString(),
-                projectService.detectBuildTool(projectRoot).displayName(),
+                projectService.detectBuildToolIfPresent(projectRoot)
+                        .map(JavaProjectService.BuildTool::displayName)
+                        .orElse("none"),
                 "codex"
         );
 

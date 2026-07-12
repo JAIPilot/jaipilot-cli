@@ -82,8 +82,12 @@ public final class CodexCliUnitTestGenerator {
     ) throws Exception {
         ensureCodexAvailable(descriptor.projectRoot());
         boolean testExistedBefore = Files.isRegularFile(descriptor.testPath());
+        Optional<List<String>> validationCommand = projectService.buildValidationCommand(descriptor);
         CoverageReportService.CoverageSnapshot beforeCoverage = projectService.buildCoverageCommand(descriptor).isPresent()
                 ? coverageReportService.readProjectSnapshot(descriptor.moduleRoot()).orElse(null)
+                : null;
+        String note = validationCommand.isEmpty()
+                ? "Build validation skipped because no repo-local Maven/Gradle wrapper was found."
                 : null;
 
         AgentUsage initialUsage = runCodex(
@@ -99,11 +103,20 @@ public final class CodexCliUnitTestGenerator {
             throw new IllegalStateException("Expected generated test file was not created: " + descriptor.testPath());
         }
 
-        ProcessExecutor.ExecutionResult validationResult = validate(descriptor, ui, showLogs, showProgress, logWriter);
-        if (validationResult.exitCode() != 0) {
-            throw new IllegalStateException(
-                    "Validation failed for " + descriptor.testFullyQualifiedName() + ":\n" + tail(validationResult.output())
+        if (validationCommand.isPresent()) {
+            ProcessExecutor.ExecutionResult validationResult = validate(
+                    validationCommand.get(),
+                    descriptor,
+                    ui,
+                    showLogs,
+                    showProgress,
+                    logWriter
             );
+            if (validationResult.exitCode() != 0) {
+                throw new IllegalStateException(
+                        "Validation failed for " + descriptor.testFullyQualifiedName() + ":\n" + tail(validationResult.output())
+                );
+            }
         }
 
         CoverageDelta coverageDelta = captureCoverageDelta(descriptor, beforeCoverage, ui, showLogs, showProgress, logWriter);
@@ -111,7 +124,8 @@ public final class CodexCliUnitTestGenerator {
                 descriptor.testPath(),
                 initialUsage,
                 coverageDelta,
-                testExistedBefore
+                testExistedBefore,
+                note
         );
     }
 
@@ -172,13 +186,13 @@ public final class CodexCliUnitTestGenerator {
     }
 
     private ProcessExecutor.ExecutionResult validate(
+            List<String> command,
             JavaProjectService.JavaClassDescriptor descriptor,
             TerminalUi ui,
             boolean showLogs,
             boolean showProgress,
             PrintWriter logWriter
     ) throws Exception {
-        List<String> command = projectService.buildValidationCommand(descriptor);
         printLiveLogHeader(ui, logWriter, showLogs, "validate", command);
         ProcessExecutor.ExecutionResult result = processExecutor.execute(
                 command,
@@ -207,6 +221,9 @@ public final class CodexCliUnitTestGenerator {
     ) throws Exception {
         Optional<List<String>> coverageCommand = projectService.buildCoverageCommand(descriptor);
         if (coverageCommand.isEmpty()) {
+            if (projectService.resolveBuildWrapper(descriptor.moduleRoot()).isEmpty()) {
+                return CoverageDelta.unavailable("JaCoCo skipped because no repo-local Maven/Gradle wrapper was found.");
+            }
             return CoverageDelta.unavailable("JaCoCo task was not detected in the build.");
         }
         printLiveLogHeader(ui, logWriter, showLogs, "coverage", coverageCommand.get());
@@ -311,7 +328,8 @@ public final class CodexCliUnitTestGenerator {
             Path outputPath,
             AgentUsage usage,
             CoverageDelta coverageDelta,
-            boolean testExistedBefore
+            boolean testExistedBefore,
+            String note
     ) {
     }
 

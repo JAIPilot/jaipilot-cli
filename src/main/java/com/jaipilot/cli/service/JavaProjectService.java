@@ -30,16 +30,28 @@ public final class JavaProjectService {
     }
 
     public BuildTool detectBuildTool(Path projectRoot) {
+        return detectBuildToolIfPresent(projectRoot)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Unable to detect Maven or Gradle project under " + projectRoot
+                ));
+    }
+
+    public Optional<BuildTool> detectBuildToolIfPresent(Path projectRoot) {
         if (Files.isRegularFile(projectRoot.resolve("pom.xml"))) {
-            return BuildTool.MAVEN;
+            return Optional.of(BuildTool.MAVEN);
         }
         if (Files.isRegularFile(projectRoot.resolve("build.gradle"))
                 || Files.isRegularFile(projectRoot.resolve("build.gradle.kts"))
                 || Files.isRegularFile(projectRoot.resolve("settings.gradle"))
                 || Files.isRegularFile(projectRoot.resolve("settings.gradle.kts"))) {
-            return BuildTool.GRADLE;
+            return Optional.of(BuildTool.GRADLE);
         }
-        throw new IllegalStateException("Unable to detect Maven or Gradle project under " + projectRoot);
+        return Optional.empty();
+    }
+
+    public Optional<String> resolveBuildWrapper(Path projectRoot) {
+        return detectBuildToolIfPresent(projectRoot)
+                .flatMap(buildTool -> buildTool.wrapperCommand(projectRoot));
     }
 
     public JavaClassDescriptor resolveClass(Path projectRoot, String selector) {
@@ -118,7 +130,7 @@ public final class JavaProjectService {
         if (!buildTool.supportsCoverage(descriptor.moduleRoot())) {
             return Optional.empty();
         }
-        return Optional.of(buildTool.coverageCommand(descriptor));
+        return buildTool.coverageCommand(descriptor);
     }
 
     public Optional<List<String>> buildProjectCoverageCommand(Path projectRoot) {
@@ -126,10 +138,10 @@ public final class JavaProjectService {
         if (!buildTool.supportsCoverage(projectRoot)) {
             return Optional.empty();
         }
-        return Optional.of(buildTool.projectCoverageCommand(projectRoot));
+        return buildTool.projectCoverageCommand(projectRoot);
     }
 
-    public List<String> buildValidationCommand(JavaClassDescriptor descriptor) {
+    public Optional<List<String>> buildValidationCommand(JavaClassDescriptor descriptor) {
         BuildTool buildTool = detectBuildTool(descriptor.moduleRoot());
         return buildTool.testCommand(descriptor);
     }
@@ -236,40 +248,54 @@ public final class JavaProjectService {
     public enum BuildTool {
         MAVEN("maven") {
             @Override
-            List<String> testCommand(JavaClassDescriptor descriptor) {
-                String executable = Files.isRegularFile(descriptor.moduleRoot().resolve("mvnw")) ? "./mvnw" : "mvn";
-                return List.of(executable, "-Dtest=" + descriptor.testClassName(), "test");
+            Optional<List<String>> testCommand(JavaClassDescriptor descriptor) {
+                return wrapperCommand(descriptor.moduleRoot())
+                        .map(executable -> List.of(executable, "-Dtest=" + descriptor.testClassName(), "test"));
             }
 
             @Override
-            List<String> coverageCommand(JavaClassDescriptor descriptor) {
-                String executable = Files.isRegularFile(descriptor.moduleRoot().resolve("mvnw")) ? "./mvnw" : "mvn";
-                return List.of(executable, "-Dtest=" + descriptor.testClassName(), "test", "jacoco:report");
+            Optional<List<String>> coverageCommand(JavaClassDescriptor descriptor) {
+                return wrapperCommand(descriptor.moduleRoot())
+                        .map(executable -> List.of(executable, "-Dtest=" + descriptor.testClassName(), "test", "jacoco:report"));
             }
 
             @Override
-            List<String> projectCoverageCommand(Path projectRoot) {
-                String executable = Files.isRegularFile(projectRoot.resolve("mvnw")) ? "./mvnw" : "mvn";
-                return List.of(executable, "test", "jacoco:report");
+            Optional<List<String>> projectCoverageCommand(Path projectRoot) {
+                return wrapperCommand(projectRoot)
+                        .map(executable -> List.of(executable, "test", "jacoco:report"));
+            }
+
+            @Override
+            Optional<String> wrapperCommand(Path projectRoot) {
+                return Files.isRegularFile(projectRoot.resolve("mvnw"))
+                        ? Optional.of("./mvnw")
+                        : Optional.empty();
             }
         },
         GRADLE("gradle") {
             @Override
-            List<String> testCommand(JavaClassDescriptor descriptor) {
-                String executable = Files.isRegularFile(descriptor.moduleRoot().resolve("gradlew")) ? "./gradlew" : "gradle";
-                return List.of(executable, "test", "--tests", descriptor.testFullyQualifiedName());
+            Optional<List<String>> testCommand(JavaClassDescriptor descriptor) {
+                return wrapperCommand(descriptor.moduleRoot())
+                        .map(executable -> List.of(executable, "test", "--tests", descriptor.testFullyQualifiedName()));
             }
 
             @Override
-            List<String> coverageCommand(JavaClassDescriptor descriptor) {
-                String executable = Files.isRegularFile(descriptor.moduleRoot().resolve("gradlew")) ? "./gradlew" : "gradle";
-                return List.of(executable, "test", "jacocoTestReport", "--tests", descriptor.testFullyQualifiedName());
+            Optional<List<String>> coverageCommand(JavaClassDescriptor descriptor) {
+                return wrapperCommand(descriptor.moduleRoot())
+                        .map(executable -> List.of(executable, "test", "jacocoTestReport", "--tests", descriptor.testFullyQualifiedName()));
             }
 
             @Override
-            List<String> projectCoverageCommand(Path projectRoot) {
-                String executable = Files.isRegularFile(projectRoot.resolve("gradlew")) ? "./gradlew" : "gradle";
-                return List.of(executable, "test", "jacocoTestReport");
+            Optional<List<String>> projectCoverageCommand(Path projectRoot) {
+                return wrapperCommand(projectRoot)
+                        .map(executable -> List.of(executable, "test", "jacocoTestReport"));
+            }
+
+            @Override
+            Optional<String> wrapperCommand(Path projectRoot) {
+                return Files.isRegularFile(projectRoot.resolve("gradlew"))
+                        ? Optional.of("./gradlew")
+                        : Optional.empty();
             }
         };
 
@@ -283,7 +309,7 @@ public final class JavaProjectService {
             return displayName;
         }
 
-        abstract List<String> testCommand(JavaClassDescriptor descriptor);
+        abstract Optional<List<String>> testCommand(JavaClassDescriptor descriptor);
 
         boolean supportsCoverage(Path moduleRoot) {
             try (var paths = Files.walk(moduleRoot, 2)) {
@@ -305,9 +331,11 @@ public final class JavaProjectService {
             }
         }
 
-        abstract List<String> coverageCommand(JavaClassDescriptor descriptor);
+        abstract Optional<List<String>> coverageCommand(JavaClassDescriptor descriptor);
 
-        abstract List<String> projectCoverageCommand(Path projectRoot);
+        abstract Optional<List<String>> projectCoverageCommand(Path projectRoot);
+
+        abstract Optional<String> wrapperCommand(Path projectRoot);
     }
 
     public record JavaClassDescriptor(

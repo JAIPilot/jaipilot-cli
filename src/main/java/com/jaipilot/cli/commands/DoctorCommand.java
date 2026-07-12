@@ -43,7 +43,9 @@ public final class DoctorCommand implements Callable<Integer> {
         Path workingDirectory = Path.of("").toAbsolutePath().normalize();
         Path projectRoot = projectService.resolveProjectRoot(workingDirectory);
         String codexVersion = generator.codexVersion(projectRoot).orElse("not found");
-        boolean jacocoConfigured = projectService.supportsCoverage(projectRoot);
+        var buildTool = projectService.detectBuildToolIfPresent(projectRoot);
+        boolean jacocoConfigured = buildTool.map(tool -> projectService.supportsCoverage(projectRoot)).orElse(false);
+        String buildWrapper = projectService.resolveBuildWrapper(projectRoot).orElse("not found");
         String reportPath = coverageReportService.findCoverageReport(projectRoot)
                 .map(Path::toString)
                 .orElse("not found");
@@ -51,7 +53,7 @@ public final class DoctorCommand implements Callable<Integer> {
         ui.printBanner("Local environment checks");
         LinkedHashMap<String, String> metadata = new LinkedHashMap<>();
         metadata.put("project", projectRoot.toString());
-        metadata.put("build tool", projectService.detectBuildTool(projectRoot).displayName());
+        metadata.put("build tool", buildTool.map(JavaProjectService.BuildTool::displayName).orElse("none"));
         metadata.put("default threshold", "%.1f%%".formatted(StatusCommand.DEFAULT_COVERAGE_THRESHOLD));
         metadata.put("changed classes", String.valueOf(projectService.findChangedProductionClasses(projectRoot).size()));
         ui.printKeyValues(metadata);
@@ -62,6 +64,10 @@ public final class DoctorCommand implements Callable<Integer> {
                 java.util.List.of(
                         java.util.List.of("Codex CLI", "not found".equals(codexVersion) ? ui.badge(TerminalUi.Tone.ERROR, "missing")
                                 : ui.badge(TerminalUi.Tone.SUCCESS, "ready"), codexVersion),
+                        java.util.List.of("Build wrapper", "not found".equals(buildWrapper) ? ui.badge(TerminalUi.Tone.WARN, "optional")
+                                : ui.badge(TerminalUi.Tone.SUCCESS, "ready"), "not found".equals(buildWrapper)
+                                ? "generation still works, but validation and JaCoCo are skipped"
+                                : buildWrapper),
                         java.util.List.of("JaCoCo config", jacocoConfigured ? ui.badge(TerminalUi.Tone.SUCCESS, "ready")
                                 : ui.badge(TerminalUi.Tone.WARN, "missing"), jacocoConfigured ? "jacoco detected in build files"
                                 : "add jacoco to pom.xml or build.gradle"),

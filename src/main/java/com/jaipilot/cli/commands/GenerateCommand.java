@@ -471,6 +471,9 @@ public final class GenerateCommand implements Callable<Integer> {
                 result.usage().reasoningOutputTokens(),
                 result.usage().totalTokens()
         );
+        if (result.note() != null && !result.note().isBlank()) {
+            out.printf("  %s %s%n", ui.highlight("note"), result.note());
+        }
         out.flush();
     }
 
@@ -510,7 +513,8 @@ public final class GenerateCommand implements Callable<Integer> {
                     descriptor.testPath(),
                     result.usage(),
                     result.coverageDelta(),
-                    result.testExistedBefore()
+                    result.testExistedBefore(),
+                    result.note()
             );
         }
         return new CodexCliUnitTestGenerator.GenerationResult(
@@ -521,7 +525,8 @@ public final class GenerateCommand implements Callable<Integer> {
                         result.coverageDelta().afterClassCoverage(),
                         null
                 ),
-                result.testExistedBefore()
+                result.testExistedBefore(),
+                result.note()
         );
     }
 
