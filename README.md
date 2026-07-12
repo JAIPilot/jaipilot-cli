@@ -57,7 +57,7 @@ jaipilot --version
 Run bare `jaipilot` to open the interactive shell:
 
 ```text
-JAIPilot 1.0.6
+JAIPilot 1.0.7
 Interactive shell ready
 
 project           /path/to/repo

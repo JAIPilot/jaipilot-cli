@@ -430,7 +430,7 @@ public final class GenerateCommand implements Callable<Integer> {
                     ? null
                     : snapshot.classCoverage(descriptor.fullyQualifiedName()).orElse(null);
             rows.add(List.of(
-                    ui.truncate(descriptor.fullyQualifiedName(), 56),
+                    descriptor.fullyQualifiedName(),
                     ui.formatCoverage(coverage == null ? null : coverage.lineCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
                     ui.formatCoverage(coverage == null ? null : coverage.branchCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
                     ui.formatTestState(Files.isRegularFile(descriptor.testPath()))
@@ -591,7 +591,7 @@ public final class GenerateCommand implements Callable<Integer> {
             CoverageReportService.ClassCoverage coverage = finalSnapshot.classCoverage(descriptor.fullyQualifiedName())
                     .orElse(new CoverageReportService.ClassCoverage(descriptor.fullyQualifiedName(), 0.0d, 0.0d));
             rows.add(List.of(
-                    ui.truncate(descriptor.fullyQualifiedName(), 56),
+                    descriptor.fullyQualifiedName(),
                     ui.formatCoverage(coverage.lineCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
                     ui.formatCoverage(coverage.branchCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
                     ui.formatTestState(Files.isRegularFile(descriptor.testPath()))

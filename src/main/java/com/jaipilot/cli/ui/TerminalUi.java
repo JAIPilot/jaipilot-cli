@@ -206,16 +206,6 @@ public final class TerminalUi {
         return new Spinner(label);
     }
 
-    public String truncate(String value, int maxWidth) {
-        if (value == null || value.length() <= maxWidth) {
-            return value;
-        }
-        if (maxWidth <= 3) {
-            return value.substring(0, maxWidth);
-        }
-        return value.substring(0, maxWidth - 3) + "...";
-    }
-
     private String joinRow(List<String> values, int[] widths, boolean header) {
         StringBuilder builder = new StringBuilder();
         for (int index = 0; index < values.size(); index++) {

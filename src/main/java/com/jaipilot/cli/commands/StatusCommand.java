@@ -91,7 +91,7 @@ public final class StatusCommand implements Callable<Integer> {
             double lineCoverage = coverage == null ? 0.0d : coverage.lineCoverage();
             double branchCoverage = coverage == null ? 0.0d : coverage.branchCoverage();
             rows.add(List.of(
-                    ui.truncate(descriptor.fullyQualifiedName(), 56),
+                    descriptor.fullyQualifiedName(),
                     ui.formatCoverage(lineCoverage, threshold),
                     ui.formatCoverage(branchCoverage, threshold),
                     ui.formatTestState(Files.isRegularFile(descriptor.testPath()))
