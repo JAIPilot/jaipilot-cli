@@ -9,7 +9,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 
 public final class CodexCliUnitTestGenerator {
@@ -18,44 +17,30 @@ public final class CodexCliUnitTestGenerator {
     private static final Duration CODEX_TIMEOUT = Duration.ofMinutes(20);
     private static final Duration VALIDATION_TIMEOUT = Duration.ofMinutes(10);
     private static final Duration COVERAGE_TIMEOUT = Duration.ofMinutes(15);
-    private static final String INPUT_COST_ENV = "JAIPILOT_CODEX_INPUT_COST_PER_MILLION_USD";
-    private static final String CACHED_INPUT_COST_ENV = "JAIPILOT_CODEX_CACHED_INPUT_COST_PER_MILLION_USD";
-    private static final String OUTPUT_COST_ENV = "JAIPILOT_CODEX_OUTPUT_COST_PER_MILLION_USD";
-    private static final String REASONING_OUTPUT_COST_ENV = "JAIPILOT_CODEX_REASONING_OUTPUT_COST_PER_MILLION_USD";
-    private static final String INPUT_COST_PROPERTY = "jaipilot.codex.inputCostPerMillionUsd";
-    private static final String CACHED_INPUT_COST_PROPERTY = "jaipilot.codex.cachedInputCostPerMillionUsd";
-    private static final String OUTPUT_COST_PROPERTY = "jaipilot.codex.outputCostPerMillionUsd";
-    private static final String REASONING_OUTPUT_COST_PROPERTY = "jaipilot.codex.reasoningOutputCostPerMillionUsd";
 
     private final JavaProjectService projectService;
     private final CoverageReportService coverageReportService;
     private final ProcessExecutor processExecutor;
-    private final PricingConfiguration pricingConfiguration;
     private final PromptTemplateService promptTemplateService;
 
     public CodexCliUnitTestGenerator(ProjectFileService fileService, JavaProjectService projectService) {
         this(
-                fileService,
                 projectService,
                 new CoverageReportService(),
                 new ProcessExecutor(),
-                PricingConfiguration.fromEnvironment(),
                 new PromptTemplateService(fileService)
         );
     }
 
     CodexCliUnitTestGenerator(
-            ProjectFileService fileService,
             JavaProjectService projectService,
             CoverageReportService coverageReportService,
             ProcessExecutor processExecutor,
-            PricingConfiguration pricingConfiguration,
             PromptTemplateService promptTemplateService
     ) {
         this.projectService = projectService;
         this.coverageReportService = coverageReportService;
         this.processExecutor = processExecutor;
-        this.pricingConfiguration = pricingConfiguration;
         this.promptTemplateService = promptTemplateService;
     }
 
@@ -84,6 +69,17 @@ public final class CodexCliUnitTestGenerator {
             boolean showLogs,
             PrintWriter logWriter
     ) throws Exception {
+        return generate(descriptor, model, ui, showLogs, true, logWriter);
+    }
+
+    public GenerationResult generate(
+            JavaProjectService.JavaClassDescriptor descriptor,
+            String model,
+            TerminalUi ui,
+            boolean showLogs,
+            boolean showProgress,
+            PrintWriter logWriter
+    ) throws Exception {
         ensureCodexAvailable(descriptor.projectRoot());
         boolean testExistedBefore = Files.isRegularFile(descriptor.testPath());
         CoverageReportService.CoverageSnapshot beforeCoverage = projectService.buildCoverageCommand(descriptor).isPresent()
@@ -96,27 +92,25 @@ public final class CodexCliUnitTestGenerator {
                 promptTemplateService.buildInitialPrompt(descriptor),
                 ui,
                 showLogs,
+                showProgress,
                 logWriter
         );
         if (!Files.isRegularFile(descriptor.testPath())) {
             throw new IllegalStateException("Expected generated test file was not created: " + descriptor.testPath());
         }
 
-        ProcessExecutor.ExecutionResult validationResult = validate(descriptor, ui, showLogs, logWriter);
+        ProcessExecutor.ExecutionResult validationResult = validate(descriptor, ui, showLogs, showProgress, logWriter);
         if (validationResult.exitCode() != 0) {
             throw new IllegalStateException(
                     "Validation failed for " + descriptor.testFullyQualifiedName() + ":\n" + tail(validationResult.output())
             );
         }
 
-        CoverageDelta coverageDelta = captureCoverageDelta(descriptor, beforeCoverage, ui, showLogs, logWriter);
-        CostEstimate estimatedCost = pricingConfiguration.estimate(initialUsage);
+        CoverageDelta coverageDelta = captureCoverageDelta(descriptor, beforeCoverage, ui, showLogs, showProgress, logWriter);
         return new GenerationResult(
                 descriptor.testPath(),
-                validationResult.output(),
                 initialUsage,
                 coverageDelta,
-                estimatedCost,
                 testExistedBefore
         );
     }
@@ -133,12 +127,15 @@ public final class CodexCliUnitTestGenerator {
             String prompt,
             TerminalUi ui,
             boolean showLogs,
+            boolean showProgress,
             PrintWriter logWriter
     ) throws Exception {
         List<String> command = new ArrayList<>();
         command.add("codex");
         command.add("-a");
         command.add("never");
+        command.add("-c");
+        command.add("hide_agent_reasoning=true");
         command.add("-s");
         command.add("workspace-write");
         if (model != null && !model.isBlank()) {
@@ -152,14 +149,16 @@ public final class CodexCliUnitTestGenerator {
         command.add("-");
 
         printLiveLogHeader(ui, logWriter, showLogs, "agent", command);
+        CodexJsonLogRenderer logRenderer = showLogs ? new CodexJsonLogRenderer(ui, logWriter) : null;
         ProcessExecutor.ExecutionResult result = processExecutor.execute(
                 command,
                 descriptor.projectRoot(),
                 CODEX_TIMEOUT,
-                showLogs,
+                false,
                 logWriter,
                 prompt,
-                progressListener(ui, "codex generating " + descriptor.testClassName(), showLogs)
+                progressListener(ui, "codex generating " + descriptor.testClassName(), showLogs, showProgress),
+                logRenderer
         );
         if (result.timedOut()) {
             throw new IllegalStateException("Codex timed out while generating tests for " + descriptor.className() + ".");
@@ -176,6 +175,7 @@ public final class CodexCliUnitTestGenerator {
             JavaProjectService.JavaClassDescriptor descriptor,
             TerminalUi ui,
             boolean showLogs,
+            boolean showProgress,
             PrintWriter logWriter
     ) throws Exception {
         List<String> command = projectService.buildValidationCommand(descriptor);
@@ -187,7 +187,7 @@ public final class CodexCliUnitTestGenerator {
                 showLogs,
                 logWriter,
                 null,
-                progressListener(ui, "validating " + descriptor.testClassName(), showLogs)
+                progressListener(ui, "validating " + descriptor.testClassName(), showLogs, showProgress)
         );
         if (result.timedOut()) {
             throw new IllegalStateException(
@@ -202,6 +202,7 @@ public final class CodexCliUnitTestGenerator {
             CoverageReportService.CoverageSnapshot beforeCoverage,
             TerminalUi ui,
             boolean showLogs,
+            boolean showProgress,
             PrintWriter logWriter
     ) throws Exception {
         Optional<List<String>> coverageCommand = projectService.buildCoverageCommand(descriptor);
@@ -216,7 +217,7 @@ public final class CodexCliUnitTestGenerator {
                 showLogs,
                 logWriter,
                 null,
-                progressListener(ui, "running JaCoCo for " + descriptor.className(), showLogs)
+                progressListener(ui, "running JaCoCo for " + descriptor.className(), showLogs, showProgress)
         );
         if (result.timedOut()) {
             return CoverageDelta.unavailable("JaCoCo coverage command timed out.");
@@ -231,7 +232,7 @@ public final class CodexCliUnitTestGenerator {
         }
         CoverageReportService.ClassCoverage beforeClass = classCoverageOrZero(beforeCoverage, descriptor);
         CoverageReportService.ClassCoverage afterClass = classCoverageOrZero(afterCoverage, descriptor);
-        return new CoverageDelta(beforeCoverage, afterCoverage, beforeClass, afterClass, null);
+        return new CoverageDelta(beforeClass, afterClass, null);
     }
 
     private AgentUsage parseUsage(String output) {
@@ -260,8 +261,13 @@ public final class CodexCliUnitTestGenerator {
         return usage;
     }
 
-    private ProcessExecutor.ProgressListener progressListener(TerminalUi ui, String label, boolean showLogs) {
-        if (showLogs) {
+    private ProcessExecutor.ProgressListener progressListener(
+            TerminalUi ui,
+            String label,
+            boolean showLogs,
+            boolean showProgress
+    ) {
+        if (showLogs || !showProgress) {
             return ProcessExecutor.ProgressListener.noOp();
         }
         return ui.spinner(label);
@@ -303,10 +309,8 @@ public final class CodexCliUnitTestGenerator {
 
     public record GenerationResult(
             Path outputPath,
-            String validationOutput,
             AgentUsage usage,
             CoverageDelta coverageDelta,
-            CostEstimate estimatedCost,
             boolean testExistedBefore
     ) {
     }
@@ -336,14 +340,12 @@ public final class CodexCliUnitTestGenerator {
     }
 
     public record CoverageDelta(
-            CoverageReportService.CoverageSnapshot beforeProjectSnapshot,
-            CoverageReportService.CoverageSnapshot afterProjectSnapshot,
             CoverageReportService.ClassCoverage beforeClassCoverage,
             CoverageReportService.ClassCoverage afterClassCoverage,
             String unavailableReason
     ) {
         static CoverageDelta unavailable(String reason) {
-            return new CoverageDelta(null, null, null, null, reason);
+            return new CoverageDelta(null, null, reason);
         }
 
         public boolean available() {
@@ -364,93 +366,6 @@ public final class CodexCliUnitTestGenerator {
 
         public Double afterBranchCoverage() {
             return afterClassCoverage == null ? null : afterClassCoverage.branchCoverage();
-        }
-    }
-
-    public record CostEstimate(
-            Double usd,
-            String status
-    ) {
-        static CostEstimate available(double usd) {
-            return new CostEstimate(usd, null);
-        }
-
-        static CostEstimate unavailable(String status) {
-            return new CostEstimate(null, status);
-        }
-
-        public boolean available() {
-            return usd != null;
-        }
-
-        public String display() {
-            if (!available()) {
-                return status;
-            }
-            return String.format(Locale.ROOT, "$%.4f", usd);
-        }
-    }
-
-    record PricingConfiguration(
-            boolean configured,
-            double inputCostPerMillionUsd,
-            double cachedInputCostPerMillionUsd,
-            double outputCostPerMillionUsd,
-            double reasoningOutputCostPerMillionUsd,
-            String unavailableReason
-    ) {
-        static PricingConfiguration fromEnvironment() {
-            Double input = readDouble(INPUT_COST_ENV, INPUT_COST_PROPERTY);
-            Double cachedInput = readDouble(CACHED_INPUT_COST_ENV, CACHED_INPUT_COST_PROPERTY);
-            Double output = readDouble(OUTPUT_COST_ENV, OUTPUT_COST_PROPERTY);
-            Double reasoningOutput = readDouble(REASONING_OUTPUT_COST_ENV, REASONING_OUTPUT_COST_PROPERTY);
-            if (input == null || output == null) {
-                return new PricingConfiguration(
-                        false,
-                        0.0d,
-                        0.0d,
-                        0.0d,
-                        0.0d,
-                        "unavailable (set " + INPUT_COST_ENV + " and " + OUTPUT_COST_ENV + " to enable)"
-                );
-            }
-            return new PricingConfiguration(
-                    true,
-                    input,
-                    cachedInput == null ? input : cachedInput,
-                    output,
-                    reasoningOutput == null ? output : reasoningOutput,
-                    null
-            );
-        }
-
-        CostEstimate estimate(AgentUsage usage) {
-            if (!configured) {
-                return CostEstimate.unavailable(unavailableReason);
-            }
-            double usd = (usage.inputTokens() * inputCostPerMillionUsd
-                    + usage.cachedInputTokens() * cachedInputCostPerMillionUsd
-                    + usage.outputTokens() * outputCostPerMillionUsd
-                    + usage.reasoningOutputTokens() * reasoningOutputCostPerMillionUsd) / 1_000_000.0d;
-            return CostEstimate.available(usd);
-        }
-
-        private static Double readDouble(String environmentKey, String propertyKey) {
-            String rawValue = System.getenv(environmentKey);
-            if (rawValue == null || rawValue.isBlank()) {
-                rawValue = System.getProperty(propertyKey);
-            }
-            if (rawValue == null || rawValue.isBlank()) {
-                return null;
-            }
-            try {
-                return Double.parseDouble(rawValue.trim());
-            } catch (NumberFormatException exception) {
-                throw new IllegalStateException(
-                        "Invalid pricing value for " + environmentKey + " / " + propertyKey + ": " + rawValue,
-                        exception
-                );
-            }
         }
     }
 

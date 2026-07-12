@@ -3,15 +3,24 @@ package com.jaipilot.cli.commands;
 import com.jaipilot.cli.service.CodexCliUnitTestGenerator;
 import com.jaipilot.cli.service.CoverageReportService;
 import com.jaipilot.cli.service.JavaProjectService;
+import com.jaipilot.cli.service.ProcessExecutor;
 import com.jaipilot.cli.service.ProjectFileService;
 import com.jaipilot.cli.ui.TerminalUi;
+import java.io.IOException;
 import java.io.PrintWriter;
+import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletionService;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorCompletionService;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Model.CommandSpec;
@@ -25,6 +34,8 @@ import picocli.CommandLine.Spec;
         description = "Generates Java unit tests locally using Codex."
 )
 public final class GenerateCommand implements Callable<Integer> {
+
+    private static final Duration PROJECT_COVERAGE_TIMEOUT = Duration.ofMinutes(20);
 
     @Parameters(
             index = "0",
@@ -72,18 +83,22 @@ public final class GenerateCommand implements Callable<Integer> {
     @Spec
     private CommandSpec spec;
 
+    private final ProjectFileService fileService;
     private final JavaProjectService projectService;
     private final CoverageReportService coverageReportService;
     private final CodexCliUnitTestGenerator generator;
+    private final ProcessExecutor processExecutor;
 
     public GenerateCommand() {
         this(new ProjectFileService(), new CoverageReportService());
     }
 
     GenerateCommand(ProjectFileService fileService, CoverageReportService coverageReportService) {
+        this.fileService = fileService;
         this.projectService = new JavaProjectService(fileService, coverageReportService);
         this.coverageReportService = coverageReportService;
         this.generator = new CodexCliUnitTestGenerator(fileService, projectService);
+        this.processExecutor = new ProcessExecutor();
     }
 
     @Override
@@ -113,8 +128,6 @@ public final class GenerateCommand implements Callable<Integer> {
         int successCount = 0;
         int failureCount = 0;
         CodexCliUnitTestGenerator.AgentUsage totalUsage = CodexCliUnitTestGenerator.AgentUsage.zero();
-        double totalEstimatedCostUsd = 0.0d;
-        boolean estimatedCostAvailableForAll = true;
         List<String> failedClasses = new ArrayList<>();
 
         ui.printBanner("Generating Java tests locally with Codex and JaCoCo");
@@ -123,6 +136,7 @@ public final class GenerateCommand implements Callable<Integer> {
         metadata.put("agent", agent.toLowerCase());
         metadata.put("target mode", targetModeDescription());
         metadata.put("targets", String.valueOf(targets.size()));
+        metadata.put("execution", isParallelBatch(targets) ? "parallel isolated x" + resolveParallelism(targets.size()) : "sequential");
         metadata.put("logs", showLogs ? "live" : "summary");
         ui.printKeyValues(metadata);
         if (baselineSnapshot == null) {
@@ -138,47 +152,17 @@ public final class GenerateCommand implements Callable<Integer> {
                 queueRows(targets, baselineSnapshot, ui)
         );
 
-        for (int index = 0; index < targets.size(); index++) {
-            JavaProjectService.JavaClassDescriptor descriptor = targets.get(index);
-            CoverageReportService.ClassCoverage baselineClassCoverage = baselineSnapshot == null
-                    ? null
-                    : baselineSnapshot.classCoverage(descriptor.fullyQualifiedName()).orElse(null);
-            out.printf(
-                    "%s %s%n",
-                    ui.badge(TerminalUi.Tone.PRIMARY, "%d/%d".formatted(index + 1, targets.size())),
-                    ui.accent(descriptor.fullyQualifiedName())
-            );
-            out.printf("  %s %s%n", ui.highlight("source"), descriptor.cutPath());
-            out.printf("  %s %s%n", ui.highlight("target"), descriptor.testPath());
-            out.printf(
-                    "  %s line %s  branch %s  %s%n",
-                    ui.highlight("baseline"),
-                    ui.formatCoverage(baselineClassCoverage == null ? null : baselineClassCoverage.lineCoverage(),
-                            StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
-                    ui.formatCoverage(baselineClassCoverage == null ? null : baselineClassCoverage.branchCoverage(),
-                            StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
-                    ui.formatTestState(Files.isRegularFile(descriptor.testPath()))
-            );
-            try {
-                CodexCliUnitTestGenerator.GenerationResult result = generator.generate(descriptor, model, ui, showLogs, out);
-                printClassResult(out, ui, result);
-                totalUsage = totalUsage.plus(result.usage());
-                if (result.estimatedCost().available()) {
-                    totalEstimatedCostUsd += result.estimatedCost().usd();
-                } else {
-                    estimatedCostAvailableForAll = false;
-                }
-                successCount++;
-            } catch (Exception exception) {
-                errUi.error("Failed for " + descriptor.fullyQualifiedName() + ": " + exception.getMessage());
-                failedClasses.add(descriptor.fullyQualifiedName());
-                failureCount++;
-            }
-            ui.blankLine();
-        }
+        RunSummary runSummary = isParallelBatch(targets)
+                ? runParallelGeneration(projectRoot, targets, baselineSnapshot, model, ui, errUi, out)
+                : runSequentialGeneration(targets, baselineSnapshot, model, ui, errUi, out);
+        successCount = runSummary.successCount();
+        failureCount = runSummary.failureCount();
+        totalUsage = runSummary.totalUsage();
+        failedClasses = runSummary.failedClasses();
 
-        CoverageReportService.CoverageSnapshot finalSnapshot = coverageReportService.readProjectSnapshot(projectRoot)
-                .orElse(null);
+        CoverageReportService.CoverageSnapshot finalSnapshot = successCount > 0
+                ? refreshProjectCoverage(projectRoot, ui, out)
+                : coverageReportService.readProjectSnapshot(projectRoot).orElse(null);
         ui.section("Run Summary");
         LinkedHashMap<String, String> summary = new LinkedHashMap<>();
         summary.put("successful classes", String.valueOf(successCount));
@@ -193,12 +177,6 @@ public final class GenerateCommand implements Callable<Integer> {
                         totalUsage.totalTokens()
                 )
         );
-        summary.put(
-                "estimated cost",
-                successCount == 0 || !estimatedCostAvailableForAll
-                        ? "unavailable (configure JAIPILOT_CODEX_*_COST_PER_MILLION_USD to enable)"
-                        : "$%.4f".formatted(totalEstimatedCostUsd)
-        );
         ui.printKeyValues(summary);
         if (!failedClasses.isEmpty()) {
             ui.printTable(
@@ -209,6 +187,212 @@ public final class GenerateCommand implements Callable<Integer> {
         printCoverageSummary(ui, baselineSnapshot, finalSnapshot);
         printRemainingThresholdFailures(ui, projectRoot, finalSnapshot);
         return failureCount == 0 ? CommandLine.ExitCode.OK : CommandLine.ExitCode.SOFTWARE;
+    }
+
+    private RunSummary runSequentialGeneration(
+            List<JavaProjectService.JavaClassDescriptor> targets,
+            CoverageReportService.CoverageSnapshot baselineSnapshot,
+            String model,
+            TerminalUi ui,
+            TerminalUi errUi,
+            PrintWriter out
+    ) {
+        int successCount = 0;
+        int failureCount = 0;
+        CodexCliUnitTestGenerator.AgentUsage totalUsage = CodexCliUnitTestGenerator.AgentUsage.zero();
+        List<String> failedClasses = new ArrayList<>();
+
+        for (int index = 0; index < targets.size(); index++) {
+            JavaProjectService.JavaClassDescriptor descriptor = targets.get(index);
+            CoverageReportService.ClassCoverage baselineClassCoverage = baselineSnapshot == null
+                    ? null
+                    : baselineSnapshot.classCoverage(descriptor.fullyQualifiedName()).orElse(null);
+            printClassContext(out, ui, descriptor, baselineClassCoverage, index + 1, targets.size());
+            try {
+                CodexCliUnitTestGenerator.GenerationResult result = generator.generate(
+                        descriptor,
+                        model,
+                        ui,
+                        showLogs,
+                        true,
+                        out
+                );
+                printClassResult(out, ui, rebaseResult(descriptor, result, baselineClassCoverage));
+                totalUsage = totalUsage.plus(result.usage());
+                successCount++;
+            } catch (Exception exception) {
+                errUi.error("Failed for " + descriptor.fullyQualifiedName() + ": " + exception.getMessage());
+                failedClasses.add(descriptor.fullyQualifiedName());
+                failureCount++;
+            }
+            ui.blankLine();
+        }
+        return new RunSummary(successCount, failureCount, totalUsage, List.copyOf(failedClasses));
+    }
+
+    private RunSummary runParallelGeneration(
+            Path projectRoot,
+            List<JavaProjectService.JavaClassDescriptor> targets,
+            CoverageReportService.CoverageSnapshot baselineSnapshot,
+            String model,
+            TerminalUi ui,
+            TerminalUi errUi,
+            PrintWriter out
+    ) {
+        int parallelism = resolveParallelism(targets.size());
+        ui.section("Execution");
+        ui.info("Running %d isolated sandboxes with parallelism %d.".formatted(targets.size(), parallelism));
+        Path batchRoot;
+        try {
+            batchRoot = Files.createTempDirectory("jaipilot-batch-");
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to create temporary workspace for parallel generation.", exception);
+        }
+
+        ExecutorService executor = Executors.newFixedThreadPool(parallelism);
+        CompletionService<GenerationOutcome> completionService = new ExecutorCompletionService<>(executor);
+        try {
+            for (JavaProjectService.JavaClassDescriptor descriptor : targets) {
+                completionService.submit(() -> generateInSandbox(batchRoot, projectRoot, descriptor, model, ui, out));
+            }
+
+            int successCount = 0;
+            int failureCount = 0;
+            int completedCount = 0;
+            CodexCliUnitTestGenerator.AgentUsage totalUsage = CodexCliUnitTestGenerator.AgentUsage.zero();
+            List<String> failedClasses = new ArrayList<>();
+
+            for (int index = 0; index < targets.size(); index++) {
+                GenerationOutcome outcome = takeCompletedOutcome(completionService);
+                completedCount++;
+                CoverageReportService.ClassCoverage baselineClassCoverage = baselineSnapshot == null
+                        ? null
+                        : baselineSnapshot.classCoverage(outcome.descriptor().fullyQualifiedName()).orElse(null);
+                printClassContext(out, ui, outcome.descriptor(), baselineClassCoverage, completedCount, targets.size());
+                if (outcome.success()) {
+                    fileService.writeFile(outcome.descriptor().testPath(), outcome.generatedTestContent());
+                    CodexCliUnitTestGenerator.GenerationResult mergedResult = rebaseResult(
+                            outcome.descriptor(),
+                            outcome.result(),
+                            baselineClassCoverage
+                    );
+                    printClassResult(out, ui, mergedResult);
+                    totalUsage = totalUsage.plus(mergedResult.usage());
+                    successCount++;
+                } else {
+                    errUi.error("Failed for " + outcome.descriptor().fullyQualifiedName() + ": " + outcome.failureMessage());
+                    failedClasses.add(outcome.descriptor().fullyQualifiedName());
+                    failureCount++;
+                }
+                ui.blankLine();
+            }
+
+            return new RunSummary(successCount, failureCount, totalUsage, List.copyOf(failedClasses));
+        } finally {
+            executor.shutdownNow();
+            fileService.deleteRecursively(batchRoot);
+        }
+    }
+
+    private GenerationOutcome generateInSandbox(
+            Path batchRoot,
+            Path projectRoot,
+            JavaProjectService.JavaClassDescriptor descriptor,
+            String model,
+            TerminalUi ui,
+            PrintWriter sharedWriter
+    ) {
+        Path sandboxRoot = batchRoot.resolve(sanitizeFileName(descriptor.className()) + "-" + Integer.toUnsignedString(descriptor.fullyQualifiedName().hashCode(), 36));
+        PrintWriter workerWriter = sharedWriter;
+        try {
+            fileService.copyProjectWorkspace(projectRoot, sandboxRoot);
+            JavaProjectService sandboxProjectService = new JavaProjectService(fileService, coverageReportService);
+            JavaProjectService.JavaClassDescriptor sandboxDescriptor = sandboxProjectService.resolveClass(
+                    sandboxRoot,
+                    normalizeRelativePath(projectRoot.relativize(descriptor.cutPath()))
+            );
+            if (showLogs) {
+                workerWriter = new PrintWriter(
+                        new PrefixedWriter(sharedWriter, badgePrefix(ui, descriptor.className())),
+                        true
+                );
+            }
+            CodexCliUnitTestGenerator sandboxGenerator = new CodexCliUnitTestGenerator(fileService, sandboxProjectService);
+            CodexCliUnitTestGenerator.GenerationResult result = sandboxGenerator.generate(
+                    sandboxDescriptor,
+                    model,
+                    ui,
+                    showLogs,
+                    false,
+                    workerWriter
+            );
+            return GenerationOutcome.success(
+                    descriptor,
+                    result,
+                    fileService.readFile(sandboxDescriptor.testPath())
+            );
+        } catch (Exception exception) {
+            String message = exception.getMessage() == null || exception.getMessage().isBlank()
+                    ? exception.toString()
+                    : exception.getMessage();
+            return GenerationOutcome.failure(descriptor, message);
+        } finally {
+            if (showLogs && workerWriter != sharedWriter) {
+                workerWriter.flush();
+            }
+            fileService.deleteRecursively(sandboxRoot);
+        }
+    }
+
+    private GenerationOutcome takeCompletedOutcome(CompletionService<GenerationOutcome> completionService) {
+        try {
+            return completionService.take().get();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Parallel generation was interrupted.", exception);
+        } catch (ExecutionException exception) {
+            Throwable cause = exception.getCause() == null ? exception : exception.getCause();
+            throw new IllegalStateException("Parallel generation failed unexpectedly.", cause);
+        }
+    }
+
+    private CoverageReportService.CoverageSnapshot refreshProjectCoverage(
+            Path projectRoot,
+            TerminalUi ui,
+            PrintWriter out
+    ) {
+        ui.section("Coverage Refresh");
+        var coverageCommand = projectService.buildProjectCoverageCommand(projectRoot);
+        if (coverageCommand.isEmpty()) {
+            ui.warn("Skipped final coverage refresh because no project-level JaCoCo task was detected.");
+            return coverageReportService.readProjectSnapshot(projectRoot).orElse(null);
+        }
+        try {
+            if (showLogs) {
+                out.printf("%s %s%n", ui.badge(TerminalUi.Tone.PRIMARY, "summary"), formatCommand(coverageCommand.get()));
+                out.flush();
+            }
+            ProcessExecutor.ExecutionResult result = processExecutor.execute(
+                    coverageCommand.get(),
+                    projectRoot,
+                    PROJECT_COVERAGE_TIMEOUT,
+                    showLogs,
+                    out,
+                    null,
+                    showLogs ? ProcessExecutor.ProgressListener.noOp() : ui.spinner("refreshing full-project JaCoCo coverage")
+            );
+            if (result.timedOut()) {
+                ui.warn("Final project coverage refresh timed out.");
+            } else if (result.exitCode() != 0) {
+                ui.warn("Final project coverage refresh failed.");
+                if (!showLogs) {
+                    ui.info(tail(result.output()));
+                }
+            }
+        } catch (Exception exception) {
+            ui.warn("Final project coverage refresh failed: " + exception.getMessage());
+        }
+        return coverageReportService.readProjectSnapshot(projectRoot).orElse(null);
     }
 
     private List<JavaProjectService.JavaClassDescriptor> resolveTargets(Path projectRoot) {
@@ -279,16 +463,66 @@ public final class GenerateCommand implements Callable<Integer> {
             out.printf("  %s %s%n", ui.highlight("coverage"), ui.muted(result.coverageDelta().unavailableReason()));
         }
         out.printf(
-                "  %s input=%d cached=%d output=%d reasoning=%d total=%d  cost=%s%n",
+                "  %s input=%d cached=%d output=%d reasoning=%d total=%d%n",
                 ui.highlight("usage"),
                 result.usage().inputTokens(),
                 result.usage().cachedInputTokens(),
                 result.usage().outputTokens(),
                 result.usage().reasoningOutputTokens(),
-                result.usage().totalTokens(),
-                result.estimatedCost().display()
+                result.usage().totalTokens()
         );
         out.flush();
+    }
+
+    private void printClassContext(
+            PrintWriter out,
+            TerminalUi ui,
+            JavaProjectService.JavaClassDescriptor descriptor,
+            CoverageReportService.ClassCoverage baselineClassCoverage,
+            int completed,
+            int total
+    ) {
+        out.printf(
+                "%s %s%n",
+                ui.badge(TerminalUi.Tone.PRIMARY, "%d/%d".formatted(completed, total)),
+                ui.accent(descriptor.fullyQualifiedName())
+        );
+        out.printf("  %s %s%n", ui.highlight("source"), descriptor.cutPath());
+        out.printf("  %s %s%n", ui.highlight("target"), descriptor.testPath());
+        out.printf(
+                "  %s line %s  branch %s  %s%n",
+                ui.highlight("baseline"),
+                ui.formatCoverage(baselineClassCoverage == null ? null : baselineClassCoverage.lineCoverage(),
+                        StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
+                ui.formatCoverage(baselineClassCoverage == null ? null : baselineClassCoverage.branchCoverage(),
+                        StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
+                ui.formatTestState(Files.isRegularFile(descriptor.testPath()))
+        );
+    }
+
+    private CodexCliUnitTestGenerator.GenerationResult rebaseResult(
+            JavaProjectService.JavaClassDescriptor descriptor,
+            CodexCliUnitTestGenerator.GenerationResult result,
+            CoverageReportService.ClassCoverage baselineClassCoverage
+    ) {
+        if (!result.coverageDelta().available()) {
+            return new CodexCliUnitTestGenerator.GenerationResult(
+                    descriptor.testPath(),
+                    result.usage(),
+                    result.coverageDelta(),
+                    result.testExistedBefore()
+            );
+        }
+        return new CodexCliUnitTestGenerator.GenerationResult(
+                descriptor.testPath(),
+                result.usage(),
+                new CodexCliUnitTestGenerator.CoverageDelta(
+                        baselineClassCoverage,
+                        result.coverageDelta().afterClassCoverage(),
+                        null
+                ),
+                result.testExistedBefore()
+        );
     }
 
     private void printCoverageSummary(
@@ -372,5 +606,138 @@ public final class GenerateCommand implements Callable<Integer> {
             return "classes below %.1f%% line coverage".formatted(coverageBelow);
         }
         return "unknown";
+    }
+
+    private boolean isParallelBatch(List<JavaProjectService.JavaClassDescriptor> targets) {
+        return targets.size() > 1 && (changed || coverageBelow != null);
+    }
+
+    private int resolveParallelism(int targetCount) {
+        int processors = Math.max(2, Runtime.getRuntime().availableProcessors());
+        return Math.min(targetCount, Math.max(2, Math.min(processors, 4)));
+    }
+
+    private String badgePrefix(TerminalUi ui, String label) {
+        return ui.badge(TerminalUi.Tone.PRIMARY, label) + " ";
+    }
+
+    private String normalizeRelativePath(Path path) {
+        return path.toString().replace('\\', '/');
+    }
+
+    private String sanitizeFileName(String value) {
+        return value.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private String formatCommand(List<String> command) {
+        return command.stream()
+                .map(this::quoteIfNeeded)
+                .reduce((left, right) -> left + " " + right)
+                .orElse("");
+    }
+
+    private String quoteIfNeeded(String value) {
+        if (value.indexOf(' ') < 0 && value.indexOf('\t') < 0) {
+            return value;
+        }
+        return "\"" + value.replace("\"", "\\\"") + "\"";
+    }
+
+    private String tail(String output) {
+        List<String> lines = output == null ? List.of() : output.lines().toList();
+        int start = Math.max(0, lines.size() - 40);
+        return String.join(System.lineSeparator(), lines.subList(start, lines.size()));
+    }
+
+    private record RunSummary(
+            int successCount,
+            int failureCount,
+            CodexCliUnitTestGenerator.AgentUsage totalUsage,
+            List<String> failedClasses
+    ) {
+    }
+
+    private record GenerationOutcome(
+            JavaProjectService.JavaClassDescriptor descriptor,
+            CodexCliUnitTestGenerator.GenerationResult result,
+            String generatedTestContent,
+            String failureMessage
+    ) {
+        static GenerationOutcome success(
+                JavaProjectService.JavaClassDescriptor descriptor,
+                CodexCliUnitTestGenerator.GenerationResult result,
+                String generatedTestContent
+        ) {
+            return new GenerationOutcome(descriptor, result, generatedTestContent, null);
+        }
+
+        static GenerationOutcome failure(
+                JavaProjectService.JavaClassDescriptor descriptor,
+                String failureMessage
+        ) {
+            return new GenerationOutcome(descriptor, null, null, failureMessage);
+        }
+
+        boolean success() {
+            return failureMessage == null;
+        }
+    }
+
+    private static final class PrefixedWriter extends Writer {
+
+        private final PrintWriter delegate;
+        private final String prefix;
+        private final StringBuilder buffer = new StringBuilder();
+
+        private PrefixedWriter(PrintWriter delegate, String prefix) {
+            this.delegate = delegate;
+            this.prefix = prefix;
+        }
+
+        @Override
+        public void write(char[] characters, int offset, int length) {
+            for (int index = offset; index < offset + length; index++) {
+                char character = characters[index];
+                if (character == '\r') {
+                    continue;
+                }
+                if (character == '\n') {
+                    emit(true);
+                    continue;
+                }
+                buffer.append(character);
+            }
+        }
+
+        @Override
+        public void flush() {
+            emit(false);
+            synchronized (delegate) {
+                delegate.flush();
+            }
+        }
+
+        @Override
+        public void close() {
+            flush();
+        }
+
+        private void emit(boolean appendNewLine) {
+            synchronized (delegate) {
+                if (buffer.length() == 0) {
+                    if (appendNewLine) {
+                        delegate.println();
+                    }
+                    return;
+                }
+                delegate.print(prefix);
+                delegate.print(buffer);
+                if (appendNewLine) {
+                    delegate.println();
+                }
+                delegate.flush();
+                buffer.setLength(0);
+            }
+        }
     }
 }

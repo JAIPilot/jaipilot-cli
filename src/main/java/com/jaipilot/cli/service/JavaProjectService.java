@@ -121,6 +121,14 @@ public final class JavaProjectService {
         return Optional.of(buildTool.coverageCommand(descriptor));
     }
 
+    public Optional<List<String>> buildProjectCoverageCommand(Path projectRoot) {
+        BuildTool buildTool = detectBuildTool(projectRoot);
+        if (!buildTool.supportsCoverage(projectRoot)) {
+            return Optional.empty();
+        }
+        return Optional.of(buildTool.projectCoverageCommand(projectRoot));
+    }
+
     public List<String> buildValidationCommand(JavaClassDescriptor descriptor) {
         BuildTool buildTool = detectBuildTool(descriptor.moduleRoot());
         return buildTool.testCommand(descriptor);
@@ -238,6 +246,12 @@ public final class JavaProjectService {
                 String executable = Files.isRegularFile(descriptor.moduleRoot().resolve("mvnw")) ? "./mvnw" : "mvn";
                 return List.of(executable, "-Dtest=" + descriptor.testClassName(), "test", "jacoco:report");
             }
+
+            @Override
+            List<String> projectCoverageCommand(Path projectRoot) {
+                String executable = Files.isRegularFile(projectRoot.resolve("mvnw")) ? "./mvnw" : "mvn";
+                return List.of(executable, "test", "jacoco:report");
+            }
         },
         GRADLE("gradle") {
             @Override
@@ -250,6 +264,12 @@ public final class JavaProjectService {
             List<String> coverageCommand(JavaClassDescriptor descriptor) {
                 String executable = Files.isRegularFile(descriptor.moduleRoot().resolve("gradlew")) ? "./gradlew" : "gradle";
                 return List.of(executable, "test", "jacocoTestReport", "--tests", descriptor.testFullyQualifiedName());
+            }
+
+            @Override
+            List<String> projectCoverageCommand(Path projectRoot) {
+                String executable = Files.isRegularFile(projectRoot.resolve("gradlew")) ? "./gradlew" : "gradle";
+                return List.of(executable, "test", "jacocoTestReport");
             }
         };
 
@@ -286,6 +306,8 @@ public final class JavaProjectService {
         }
 
         abstract List<String> coverageCommand(JavaClassDescriptor descriptor);
+
+        abstract List<String> projectCoverageCommand(Path projectRoot);
     }
 
     public record JavaClassDescriptor(

@@ -59,14 +59,6 @@ public final class CoverageReportService {
         );
     }
 
-    public Map<String, Double> readLineCoverageByClass(Path reportPath) {
-        Map<String, Double> coverageByClass = new HashMap<>();
-        for (ClassCoverage coverage : readReportSnapshot(reportPath).classCoverageByName().values()) {
-            coverageByClass.put(coverage.fullyQualifiedName(), coverage.lineCoverage());
-        }
-        return coverageByClass;
-    }
-
     private Document parse(Path reportPath) {
         try (InputStream inputStream = Files.newInputStream(reportPath)) {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();

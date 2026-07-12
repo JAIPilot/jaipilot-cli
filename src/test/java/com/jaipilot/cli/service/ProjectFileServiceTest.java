@@ -5,6 +5,7 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProjectFileServiceTest {
@@ -67,5 +68,34 @@ class ProjectFileServiceTest {
         String template = projectFileService.readResource("prompts/generate-java-tests.md");
 
         assertTrue(template.contains("Generate or update JUnit tests for one Java production class."));
+    }
+
+    @Test
+    void copyProjectWorkspaceSkipsBuildOutputsAndGitMetadata() throws Exception {
+        Path sourceRoot = tempDir.resolve("source");
+        Files.createDirectories(sourceRoot.resolve(".git"));
+        Files.createDirectories(sourceRoot.resolve("target/classes"));
+        Files.createDirectories(sourceRoot.resolve("build/tmp"));
+        Files.createDirectories(sourceRoot.resolve("src/main/java/com/example"));
+        Path wrapperScript = sourceRoot.resolve("mvnw");
+        Files.writeString(sourceRoot.resolve(".git/config"), "[core]");
+        Files.writeString(sourceRoot.resolve("target/classes/Example.class"), "compiled");
+        Files.writeString(sourceRoot.resolve("build/tmp/output.txt"), "generated");
+        Files.writeString(sourceRoot.resolve(".DS_Store"), "ignored");
+        Files.writeString(sourceRoot.resolve("pom.xml"), "<project/>");
+        Files.writeString(wrapperScript, "#!/bin/sh\nexit 0\n");
+        wrapperScript.toFile().setExecutable(true, false);
+        Files.writeString(sourceRoot.resolve("src/main/java/com/example/Example.java"), "class Example {}");
+
+        Path destinationRoot = tempDir.resolve("destination");
+        projectFileService.copyProjectWorkspace(sourceRoot, destinationRoot);
+
+        assertTrue(Files.isRegularFile(destinationRoot.resolve("pom.xml")));
+        assertTrue(Files.isExecutable(destinationRoot.resolve("mvnw")));
+        assertTrue(Files.isRegularFile(destinationRoot.resolve("src/main/java/com/example/Example.java")));
+        assertFalse(Files.exists(destinationRoot.resolve(".git/config")));
+        assertFalse(Files.exists(destinationRoot.resolve("target/classes/Example.class")));
+        assertFalse(Files.exists(destinationRoot.resolve("build/tmp/output.txt")));
+        assertFalse(Files.exists(destinationRoot.resolve(".DS_Store")));
     }
 }

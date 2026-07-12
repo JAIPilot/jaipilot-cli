@@ -18,19 +18,33 @@ public final class PromptTemplateService {
     }
 
     public String buildInitialPrompt(JavaProjectService.JavaClassDescriptor descriptor) {
-        String existingTest = Files.isRegularFile(descriptor.testPath())
-                ? fileService.readFile(descriptor.testPath())
-                : "";
         Map<String, String> values = new LinkedHashMap<>();
-        values.put("PROJECT_ROOT", descriptor.projectRoot().toString());
-        values.put("MODULE_ROOT", descriptor.moduleRoot().toString());
-        values.put("CLASS_UNDER_TEST", descriptor.fullyQualifiedName());
-        values.put("CLASS_FILE", descriptor.cutPath().toString());
-        values.put("TARGET_TEST_FILE", descriptor.testPath().toString());
-        values.put("TARGET_TEST_CLASS", descriptor.testFullyQualifiedName());
-        values.put("SOURCE_CONTENT", fileService.readFile(descriptor.cutPath()));
-        values.put("EXISTING_TEST_CONTENT", existingTest);
+        putIfReferenced(values, "PROJECT_ROOT", descriptor.projectRoot().toString());
+        putIfReferenced(values, "MODULE_ROOT", descriptor.moduleRoot().toString());
+        putIfReferenced(values, "CLASS_UNDER_TEST", descriptor.fullyQualifiedName());
+        putIfReferenced(values, "CLASS_FILE", descriptor.cutPath().toString());
+        putIfReferenced(values, "TARGET_TEST_FILE", descriptor.testPath().toString());
+        putIfReferenced(values, "SOURCE_CONTENT", () -> fileService.readFile(descriptor.cutPath()));
+        putIfReferenced(values, "EXISTING_TEST_CONTENT", () -> Files.isRegularFile(descriptor.testPath())
+                ? fileService.readFile(descriptor.testPath())
+                : "");
         return render(initialTemplate, values);
+    }
+
+    private void putIfReferenced(Map<String, String> values, String key, String value) {
+        if (initialTemplate.contains(placeholder(key))) {
+            values.put(key, value);
+        }
+    }
+
+    private void putIfReferenced(Map<String, String> values, String key, java.util.function.Supplier<String> valueSupplier) {
+        if (initialTemplate.contains(placeholder(key))) {
+            values.put(key, valueSupplier.get());
+        }
+    }
+
+    private String placeholder(String key) {
+        return "{{" + key + "}}";
     }
 
     private String render(String template, Map<String, String> values) {

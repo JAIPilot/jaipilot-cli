@@ -3,7 +3,6 @@ package com.jaipilot.cli.service;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -17,14 +16,10 @@ class PromptTemplateServiceTest {
     Path tempDir;
 
     @Test
-    void buildInitialPromptLoadsMarkdownTemplateAndRendersValues() throws Exception {
+    void buildInitialPromptUsesSavedTemplateWithoutReadingUnusedPlaceholders() {
         Path projectRoot = tempDir.resolve("sample");
         Path sourcePath = projectRoot.resolve("src/main/java/com/example/OrderService.java");
         Path testPath = projectRoot.resolve("src/test/java/com/example/OrderServiceTest.java");
-        Files.createDirectories(sourcePath.getParent());
-        Files.createDirectories(testPath.getParent());
-        Files.writeString(sourcePath, "package com.example; class OrderService {}");
-        Files.writeString(testPath, "package com.example; class OrderServiceTest {}");
 
         JavaProjectService.JavaClassDescriptor descriptor = new JavaProjectService.JavaClassDescriptor(
                 projectRoot,
@@ -41,10 +36,15 @@ class PromptTemplateServiceTest {
         String prompt = promptTemplateService.buildInitialPrompt(descriptor);
 
         assertTrue(prompt.contains("Generate or update JUnit tests for one Java production class."));
-        assertTrue(prompt.contains(projectRoot.toString()));
-        assertTrue(prompt.contains(sourcePath.toString()));
-        assertTrue(prompt.contains(testPath.toString()));
-        assertTrue(prompt.contains("package com.example; class OrderService {}"));
+        assertTrue(prompt.contains("Before editing, read these files if they exist:"));
+        assertTrue(prompt.contains("isolated sandbox workspace in parallel"));
+        assertTrue(prompt.contains("- After editing, stop and let JAIPilot run validation."));
+        assertFalse(prompt.contains(projectRoot.toString()));
+        assertFalse(prompt.contains(sourcePath.toString()));
+        assertFalse(prompt.contains(testPath.toString()));
+        assertFalse(prompt.contains("package com.example; class OrderService {}"));
+        assertFalse(prompt.contains("Target test class:"));
+        assertFalse(prompt.contains("com.example.OrderServiceTest"));
         assertFalse(prompt.contains("Supabase"));
         assertFalse(prompt.contains("JAIPilot backend"));
     }

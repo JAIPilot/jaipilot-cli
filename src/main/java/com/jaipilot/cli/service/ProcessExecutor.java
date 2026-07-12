@@ -21,7 +21,7 @@ public final class ProcessExecutor {
             boolean verbose,
             PrintWriter verboseWriter
     ) throws IOException, InterruptedException {
-        return execute(command, workingDirectory, timeout, verbose, verboseWriter, null, ProgressListener.noOp());
+        return execute(command, workingDirectory, timeout, verbose, verboseWriter, null, ProgressListener.noOp(), OutputListener.noOp());
     }
 
     public ExecutionResult execute(
@@ -32,7 +32,7 @@ public final class ProcessExecutor {
             PrintWriter verboseWriter,
             String stdinText
     ) throws IOException, InterruptedException {
-        return execute(command, workingDirectory, timeout, verbose, verboseWriter, stdinText, ProgressListener.noOp());
+        return execute(command, workingDirectory, timeout, verbose, verboseWriter, stdinText, ProgressListener.noOp(), OutputListener.noOp());
     }
 
     public ExecutionResult execute(
@@ -44,16 +44,33 @@ public final class ProcessExecutor {
             String stdinText,
             ProgressListener progressListener
     ) throws IOException, InterruptedException {
+        return execute(command, workingDirectory, timeout, verbose, verboseWriter, stdinText, progressListener, OutputListener.noOp());
+    }
+
+    public ExecutionResult execute(
+            List<String> command,
+            Path workingDirectory,
+            Duration timeout,
+            boolean verbose,
+            PrintWriter verboseWriter,
+            String stdinText,
+            ProgressListener progressListener,
+            OutputListener outputListener
+    ) throws IOException, InterruptedException {
         ProcessBuilder processBuilder = new ProcessBuilder(command)
                 .directory(workingDirectory.toFile())
                 .redirectErrorStream(true);
 
         Process process = processBuilder.start();
         ProgressListener listener = progressListener == null ? ProgressListener.noOp() : progressListener;
+        OutputListener lineListener = outputListener == null ? OutputListener.noOp() : outputListener;
         listener.onStart(command);
         writeInput(process, stdinText);
         StringBuilder output = new StringBuilder();
-        Thread readerThread = new Thread(() -> readOutput(process, output, verbose, verboseWriter), "jaipilot-process-reader");
+        Thread readerThread = new Thread(
+                () -> readOutput(process, output, verbose, verboseWriter, lineListener),
+                "jaipilot-process-reader"
+        );
         readerThread.setDaemon(true);
         readerThread.start();
 
@@ -98,7 +115,13 @@ public final class ProcessExecutor {
         return new WaitResult(false, Duration.ofNanos(System.nanoTime() - startedAt));
     }
 
-    private static void readOutput(Process process, StringBuilder output, boolean verbose, PrintWriter verboseWriter) {
+    private static void readOutput(
+            Process process,
+            StringBuilder output,
+            boolean verbose,
+            PrintWriter verboseWriter,
+            OutputListener outputListener
+    ) {
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
@@ -107,6 +130,7 @@ public final class ProcessExecutor {
                 if (verbose) {
                     verboseWriter.println(line);
                 }
+                outputListener.onLine(line);
             }
             if (verbose) {
                 verboseWriter.flush();
@@ -143,7 +167,21 @@ public final class ProcessExecutor {
         }
     }
 
+    public interface OutputListener {
+
+        default void onLine(String line) {
+        }
+
+        static OutputListener noOp() {
+            return NoOpOutputListener.INSTANCE;
+        }
+    }
+
     private enum NoOpProgressListener implements ProgressListener {
+        INSTANCE
+    }
+
+    private enum NoOpOutputListener implements OutputListener {
         INSTANCE
     }
 

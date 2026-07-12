@@ -3,9 +3,14 @@ package com.jaipilot.cli.service;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
+import java.util.Set;
 
 public final class ProjectFileService {
 
@@ -14,6 +19,18 @@ public final class ProjectFileService {
             "settings.gradle.kts",
             "build.gradle",
             "build.gradle.kts"
+    );
+    private static final Set<String> COPY_EXCLUDED_DIRECTORY_NAMES = Set.of(
+            ".git",
+            "target",
+            "build",
+            ".gradle",
+            ".idea",
+            ".vscode",
+            "out"
+    );
+    private static final Set<String> COPY_EXCLUDED_FILE_NAMES = Set.of(
+            ".DS_Store"
     );
 
     public ProjectFileService() {
@@ -54,6 +71,71 @@ public final class ProjectFileService {
             Files.writeString(path, content, StandardCharsets.UTF_8);
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to write file " + path, exception);
+        }
+    }
+
+    public void copyProjectWorkspace(Path sourceRoot, Path destinationRoot) {
+        try {
+            Files.createDirectories(destinationRoot);
+            Files.walkFileTree(sourceRoot, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) throws IOException {
+                    String name = directory.getFileName() == null ? "" : directory.getFileName().toString();
+                    if (!directory.equals(sourceRoot) && COPY_EXCLUDED_DIRECTORY_NAMES.contains(name)) {
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
+                    Files.createDirectories(destinationRoot.resolve(sourceRoot.relativize(directory)));
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+                    if (COPY_EXCLUDED_FILE_NAMES.contains(file.getFileName().toString())) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    Path destination = destinationRoot.resolve(sourceRoot.relativize(file));
+                    Path parent = destination.getParent();
+                    if (parent != null) {
+                        Files.createDirectories(parent);
+                    }
+                    Files.copy(file, destination, StandardCopyOption.COPY_ATTRIBUTES);
+                    if (Files.isExecutable(file)) {
+                        destination.toFile().setExecutable(true, false);
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException exception) {
+            throw new IllegalStateException(
+                    "Failed to create isolated workspace from " + sourceRoot + " to " + destinationRoot,
+                    exception
+            );
+        }
+    }
+
+    public void deleteRecursively(Path root) {
+        if (root == null || Files.notExists(root)) {
+            return;
+        }
+        try {
+            Files.walkFileTree(root, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+                    Files.deleteIfExists(file);
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult postVisitDirectory(Path directory, IOException exception) throws IOException {
+                    if (exception != null) {
+                        throw exception;
+                    }
+                    Files.deleteIfExists(directory);
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to delete directory " + root, exception);
         }
     }
 

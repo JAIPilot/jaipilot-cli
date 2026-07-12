@@ -8,7 +8,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import org.jline.keymap.KeyMap;
 import org.jline.reader.Binding;
 import org.jline.reader.EndOfFileException;
@@ -115,9 +118,32 @@ public final class InteractiveShell {
                 .build();
         reader.setVariable(LineReader.LIST_MAX, 10_000);
         reader.setVariable(LineReader.MENU_LIST_MAX, 10_000);
+        applyCompletionTheme(reader);
         bindCompletionKeys(reader, terminal);
         new AutosuggestionWidgets(reader).enable();
         return reader;
+    }
+
+    static void applyCompletionTheme(LineReader reader) {
+        Objects.requireNonNull(reader, "reader");
+        for (Map.Entry<String, String> entry : completionTheme().entrySet()) {
+            reader.setVariable(entry.getKey(), entry.getValue());
+        }
+    }
+
+    static Map<String, String> completionTheme() {
+        LinkedHashMap<String, String> theme = new LinkedHashMap<>();
+        theme.put(LineReader.COMPLETION_STYLE_STARTING, "fg:cyan,bold");
+        theme.put(LineReader.COMPLETION_STYLE_DESCRIPTION, "fg:bright-black");
+        theme.put(LineReader.COMPLETION_STYLE_GROUP, "fg:cyan,bold");
+        theme.put(LineReader.COMPLETION_STYLE_SELECTION, "fg:black,bg:cyan,bold");
+        theme.put(LineReader.COMPLETION_STYLE_BACKGROUND, "bg:default");
+        theme.put(LineReader.COMPLETION_STYLE_LIST_STARTING, "fg:cyan,bold");
+        theme.put(LineReader.COMPLETION_STYLE_LIST_DESCRIPTION, "fg:bright-black");
+        theme.put(LineReader.COMPLETION_STYLE_LIST_GROUP, "fg:cyan,bold");
+        theme.put(LineReader.COMPLETION_STYLE_LIST_SELECTION, "fg:black,bg:cyan,bold");
+        theme.put(LineReader.COMPLETION_STYLE_LIST_BACKGROUND, "bg:default");
+        return theme;
     }
 
     private void bindCompletionKeys(LineReader reader, Terminal terminal) {

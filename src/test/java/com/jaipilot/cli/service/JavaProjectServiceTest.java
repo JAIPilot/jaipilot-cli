@@ -61,6 +61,10 @@ class JavaProjectServiceTest {
         assertEquals(1, belowThreshold.size());
         assertEquals("com.example.LegacyService", belowThreshold.get(0).fullyQualifiedName());
         assertTrue(service.supportsCoverage(projectRoot));
+        assertEquals(
+                List.of("mvn", "test", "jacoco:report"),
+                service.buildProjectCoverageCommand(projectRoot).orElseThrow()
+        );
     }
 
     private void writeJava(Path path, String className) throws Exception {

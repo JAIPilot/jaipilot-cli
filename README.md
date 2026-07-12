@@ -22,12 +22,11 @@
 - JLine-powered interactive shell with command history, visible Tab completion menus, and inline history suggestions
 - Rich ANSI output with sections, tables, coverage meters, and live phase spinners
 - Java class targeting by path, fully qualified name, or simple unique class name
-- Batch generation for uncommitted classes
-- Batch generation for classes below a coverage threshold
+- Isolated parallel batch generation for uncommitted classes
+- Isolated parallel batch generation for classes below a coverage threshold
 - JaCoCo-based status reporting with a default threshold of `80%`
 - Before/after coverage summaries for each run
 - Per-class and total agent token usage
-- Optional estimated cost reporting from local pricing env vars
 - Friendly CLI errors instead of raw stack traces
 
 ## Prerequisites
@@ -56,7 +55,7 @@ jaipilot --version
 Run bare `jaipilot` to open the interactive shell:
 
 ```text
-JAIPilot 1.0.4
+JAIPilot 1.0.5
 Interactive shell ready
 
 project           /path/to/repo
@@ -108,24 +107,12 @@ Each generation run prints:
 
 - a queue table showing target classes, coverage, and current test state
 - live progress for Codex, validation, and JaCoCo phases
-- optional streamed process logs with `--show-logs`
+- optional streamed process logs with `--show-logs`, including readable Codex event logs instead of raw JSON
+- isolated parallel workers for batch modes, with per-class log prefixes so concurrent output stays readable
 - the generated or updated test path
-- per-class token usage and optional estimated cost
+- per-class token usage
 - per-class JaCoCo coverage deltas when available
-- a final run summary with total usage, total cost, overall project coverage improvement, and remaining below-threshold classes
-
-## Cost Reporting
-
-Codex CLI exposes token usage, not portable billing. JAIPilot therefore reports exact usage and can optionally estimate cost if you provide pricing locally:
-
-```bash
-export JAIPILOT_CODEX_INPUT_COST_PER_MILLION_USD=1.25
-export JAIPILOT_CODEX_CACHED_INPUT_COST_PER_MILLION_USD=0.125
-export JAIPILOT_CODEX_OUTPUT_COST_PER_MILLION_USD=10
-export JAIPILOT_CODEX_REASONING_OUTPUT_COST_PER_MILLION_USD=10
-```
-
-If these are not set, JAIPilot marks estimated cost as unavailable and still reports token usage.
+- a final run summary with total usage, a fresh whole-project coverage improvement report, and remaining below-threshold classes
 
 ## Codex Memory Files
 
@@ -149,10 +136,10 @@ JAIPilot fills that template with class paths, source code, and existing test co
 ## How It Works
 
 1. JAIPilot resolves one or more Java production classes from your input.
-2. It asks `codex` to create or update the corresponding JUnit test under `src/test/java`.
-3. It runs the module test command locally.
-4. It runs JaCoCo coverage for the target class when available.
-5. It prints per-class and aggregate coverage and usage summaries.
+2. For batch modes, it copies the project into isolated temporary sandboxes so multiple Codex runs can proceed in parallel without sharing build output or coverage state.
+3. It asks `codex` to create or update the corresponding JUnit test under `src/test/java`.
+4. It runs the module test command locally.
+5. It runs JaCoCo coverage for the target class when available, then refreshes whole-project coverage before printing the final summary.
 
 ## License
 
