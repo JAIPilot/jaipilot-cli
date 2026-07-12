@@ -14,7 +14,6 @@ Strategy
 - Try to generate unit tests for only one class at a time
 - To generate unit tests you need to identify dependent classes for the source class.
 - Before generating unit tests for the class, understand the code for dependent classes and then proceed to write unit tests
-- Ensure that the unit tests compile and run properly with the required coverage.
 - Determine the correct test file path and class name from the repository's existing conventions. Do not assume JAIPilot has preselected a target test file for you.
 - For multi class unit test generation, each class may run in its own isolated sandbox workspace in parallel.
 - Treat the current class as fully independent from any other in-flight generation.

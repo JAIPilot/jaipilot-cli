@@ -45,7 +45,7 @@ public final class DoctorCommand implements Callable<Integer> {
         String codexVersion = generator.codexVersion(projectRoot).orElse("not found");
         var buildTool = projectService.detectBuildToolIfPresent(projectRoot);
         boolean jacocoConfigured = buildTool.map(tool -> projectService.supportsCoverage(projectRoot)).orElse(false);
-        String buildWrapper = projectService.resolveBuildWrapper(projectRoot).orElse("not found");
+        String buildWrapper = projectService.resolveBuildWrapper(projectRoot).orElse("unavailable");
         String reportPath = coverageReportService.findCoverageReport(projectRoot)
                 .map(Path::toString)
                 .orElse("not found");
@@ -64,9 +64,9 @@ public final class DoctorCommand implements Callable<Integer> {
                 java.util.List.of(
                         java.util.List.of("Codex CLI", "not found".equals(codexVersion) ? ui.badge(TerminalUi.Tone.ERROR, "missing")
                                 : ui.badge(TerminalUi.Tone.SUCCESS, "ready"), codexVersion),
-                        java.util.List.of("Build wrapper", "not found".equals(buildWrapper) ? ui.badge(TerminalUi.Tone.WARN, "optional")
-                                : ui.badge(TerminalUi.Tone.SUCCESS, "ready"), "not found".equals(buildWrapper)
-                                ? "generation still works, but validation and JaCoCo are skipped"
+                        java.util.List.of("Build wrapper", "unavailable".equals(buildWrapper) ? ui.badge(TerminalUi.Tone.WARN, "optional")
+                                : ui.badge(TerminalUi.Tone.SUCCESS, "ready"), "unavailable".equals(buildWrapper)
+                                ? "generation still works, but validation and JaCoCo are skipped when no usable wrapper is available"
                                 : buildWrapper),
                         java.util.List.of("JaCoCo config", jacocoConfigured ? ui.badge(TerminalUi.Tone.SUCCESS, "ready")
                                 : ui.badge(TerminalUi.Tone.WARN, "missing"), jacocoConfigured ? "jacoco detected in build files"

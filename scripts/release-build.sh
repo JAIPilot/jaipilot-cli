@@ -121,7 +121,7 @@ if [ "$CURRENT_VERSION" != "$VERSION" ] || ! grep -Fq "version = \"$VERSION\";" 
   ensure_version_applied "$VERSION"
 fi
 
-./mvnw -B verify
+./mvnw -B clean verify
 ./scripts/smoke-test-install.sh --version "$VERSION"
 
 commit_and_tag "$VERSION"

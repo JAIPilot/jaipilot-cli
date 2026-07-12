@@ -17,7 +17,7 @@
 
 `jaipilot-cli` is a Java-only local workflow. It does not call any custom backend or hosted service. Test generation comes from the coding agent you already use, starting with `codex`.
 
-JAIPilot does not require a globally installed Maven or Gradle at runtime. It only uses a repo-local `mvnw` or `gradlew` when present. If a wrapper is missing, JAIPilot still generates tests with Codex and skips local validation and JaCoCo.
+JAIPilot does not require a globally installed Maven or Gradle at runtime. It only uses a usable repo-local `mvnw` or `gradlew` when the wrapper script and wrapper properties are both present. If the wrapper is missing or incomplete, JAIPilot still generates tests with Codex and skips local validation and JaCoCo.
 
 ## Features
 
@@ -35,8 +35,9 @@ JAIPilot does not require a globally installed Maven or Gradle at runtime. It on
 
 - Java 17+
 - `codex` installed and already authenticated locally
-- Optional: a repo-local `mvnw` or `gradlew` if you want automatic local validation
+- Optional: a usable repo-local `mvnw` or `gradlew` if you want automatic local validation
 - Optional: JaCoCo configured in the project build if you want coverage and `status`
+- Optional: a SonarQube or SonarQube Cloud project if you want code-smell and quality-gate analysis for this repository
 
 ## Install
 
@@ -52,12 +53,41 @@ Then verify:
 jaipilot --version
 ```
 
+## SonarQube Analysis
+
+`jaipilot-cli` now generates a JaCoCo XML report during `verify` and includes a pinned Sonar scanner for Maven.
+
+Run a local analysis against a self-hosted SonarQube server with:
+
+```bash
+SONAR_TOKEN=your-token \
+SONAR_HOST_URL=https://your-sonarqube.example.com \
+./mvnw -B verify sonar:sonar
+```
+
+If you are using SonarQube Cloud instead, pass your organization:
+
+```bash
+SONAR_TOKEN=your-token \
+./mvnw -B verify sonar:sonar -Dsonar.organization=your-org
+```
+
+GitHub Actions support is configured in `.github/workflows/sonarqube.yml`.
+
+Repository settings expected by that workflow:
+
+- GitHub secret `SONAR_TOKEN`
+- GitHub variable `SONAR_HOST_URL` for self-hosted SonarQube, or GitHub variable `SONAR_ORGANIZATION` for SonarQube Cloud
+- Optional GitHub variable `SONAR_ENABLE_PULL_REQUEST_ANALYSIS=true` if your Sonar edition supports pull request analysis and you want the workflow to run on `pull_request`
+
+The workflow runs automatically on pushes to `main`, can be triggered manually with `workflow_dispatch`, and skips itself until the required Sonar configuration is present.
+
 ## Usage
 
 Run bare `jaipilot` to open the interactive shell:
 
 ```text
-JAIPilot 1.0.8
+JAIPilot 1.0.9
 Interactive shell ready
 
 project           /path/to/repo

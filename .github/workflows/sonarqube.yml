@@ -1,0 +1,49 @@
+name: SonarQube
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+      SONAR_ORGANIZATION: ${{ vars.SONAR_ORGANIZATION }}
+      SONAR_ENABLE_PULL_REQUEST_ANALYSIS: ${{ vars.SONAR_ENABLE_PULL_REQUEST_ANALYSIS }}
+
+    steps:
+      - name: Checkout
+        if: ${{ env.SONAR_TOKEN != '' && (env.SONAR_HOST_URL != '' || env.SONAR_ORGANIZATION != '') && (github.event_name != 'pull_request' || env.SONAR_ENABLE_PULL_REQUEST_ANALYSIS == 'true') }}
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java
+        if: ${{ env.SONAR_TOKEN != '' && (env.SONAR_HOST_URL != '' || env.SONAR_ORGANIZATION != '') && (github.event_name != 'pull_request' || env.SONAR_ENABLE_PULL_REQUEST_ANALYSIS == 'true') }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Analyze with SonarQube
+        if: ${{ env.SONAR_TOKEN != '' && (env.SONAR_HOST_URL != '' || env.SONAR_ORGANIZATION != '') && (github.event_name != 'pull_request' || env.SONAR_ENABLE_PULL_REQUEST_ANALYSIS == 'true') }}
+        run: |
+          extra_args=()
+          if [ -n "${SONAR_HOST_URL:-}" ]; then
+            extra_args+=("-Dsonar.host.url=${SONAR_HOST_URL}")
+          fi
+          if [ -n "${SONAR_ORGANIZATION:-}" ]; then
+            extra_args+=("-Dsonar.organization=${SONAR_ORGANIZATION}")
+          fi
+
+          ./mvnw -B -ntp verify sonar:sonar \
+            -Dsonar.qualitygate.wait=true \
+            "${extra_args[@]}"

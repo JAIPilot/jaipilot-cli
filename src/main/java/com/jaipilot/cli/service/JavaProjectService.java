@@ -374,6 +374,8 @@ public final class JavaProjectService {
             @Override
             Optional<String> wrapperCommand(Path projectRoot) {
                 return Files.isRegularFile(projectRoot.resolve("mvnw"))
+                        && Files.isExecutable(projectRoot.resolve("mvnw"))
+                        && Files.isRegularFile(projectRoot.resolve(".mvn/wrapper/maven-wrapper.properties"))
                         ? Optional.of("./mvnw")
                         : Optional.empty();
             }
@@ -400,6 +402,8 @@ public final class JavaProjectService {
             @Override
             Optional<String> wrapperCommand(Path projectRoot) {
                 return Files.isRegularFile(projectRoot.resolve("gradlew"))
+                        && Files.isExecutable(projectRoot.resolve("gradlew"))
+                        && Files.isRegularFile(projectRoot.resolve("gradle/wrapper/gradle-wrapper.properties"))
                         ? Optional.of("./gradlew")
                         : Optional.empty();
             }

@@ -36,8 +36,8 @@ Update this file when any of these change:
 
 ## Current Known Defaults
 
-- Maven wrapper is preferred when `mvnw` exists.
-- Gradle wrapper is preferred when `gradlew` exists.
+- Maven wrapper is preferred only when `mvnw` and `.mvn/wrapper/maven-wrapper.properties` both exist.
+- Gradle wrapper is preferred only when `gradlew` and `gradle/wrapper/gradle-wrapper.properties` both exist.
 - Default coverage threshold is `80%`.
 - Codex is expected to determine the final test file path and class name from repository conventions.
 - The interactive shell stores history at `~/.jaipilot/history`.
