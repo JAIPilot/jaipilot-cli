@@ -7,13 +7,16 @@ import java.util.Objects;
 public final class PromptTemplateService {
 
     private static final String INITIAL_TEMPLATE_PATH = "prompts/generate-java-tests.md";
+    private static final String PREPARATION_TEMPLATE_PATH = "prompts/prepare-java-project.md";
 
     private final ProjectFileService fileService;
     private final String initialTemplate;
+    private final String preparationTemplate;
 
     public PromptTemplateService(ProjectFileService fileService) {
         this.fileService = Objects.requireNonNull(fileService, "fileService");
         this.initialTemplate = fileService.readResource(INITIAL_TEMPLATE_PATH);
+        this.preparationTemplate = fileService.readResource(PREPARATION_TEMPLATE_PATH);
     }
 
     public String buildInitialPrompt(JavaProjectService.JavaClassDescriptor descriptor) {
@@ -26,6 +29,12 @@ public final class PromptTemplateService {
         return render(initialTemplate, values);
     }
 
+    public String buildPreparationPrompt(java.nio.file.Path projectRoot) {
+        Map<String, String> values = new LinkedHashMap<>();
+        putIfReferenced(preparationTemplate, values, "PROJECT_ROOT", projectRoot.toString());
+        return render(preparationTemplate, values);
+    }
+
     private void putIfReferenced(Map<String, String> values, String key, String value) {
         if (initialTemplate.contains(placeholder(key))) {
             values.put(key, value);
@@ -35,6 +44,12 @@ public final class PromptTemplateService {
     private void putIfReferenced(Map<String, String> values, String key, java.util.function.Supplier<String> valueSupplier) {
         if (initialTemplate.contains(placeholder(key))) {
             values.put(key, valueSupplier.get());
+        }
+    }
+
+    private void putIfReferenced(String template, Map<String, String> values, String key, String value) {
+        if (template.contains(placeholder(key))) {
+            values.put(key, value);
         }
     }
 

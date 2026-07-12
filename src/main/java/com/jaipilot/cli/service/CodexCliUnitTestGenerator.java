@@ -13,6 +13,7 @@ import java.util.Optional;
 public final class CodexCliUnitTestGenerator {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final Duration PREPARATION_TIMEOUT = Duration.ofMinutes(30);
     private static final Duration CODEX_TIMEOUT = Duration.ofMinutes(20);
 
     private final ProjectFileService fileService;
@@ -87,13 +88,16 @@ public final class CodexCliUnitTestGenerator {
                 .orElse(null);
 
         AgentUsage initialUsage = runCodex(
-                descriptor,
+                descriptor.projectRoot(),
                 model,
                 promptTemplateService.buildInitialPrompt(descriptor),
                 ui,
                 showLogs,
                 showProgress,
-                logWriter
+                logWriter,
+                CODEX_TIMEOUT,
+                "codex generating tests for " + descriptor.className(),
+                "Codex failed while generating tests for " + descriptor.className() + ":"
         );
         List<JavaProjectService.JavaTestDescriptor> touchedTests = projectService.findTouchedTests(descriptor, beforeTestSnapshot);
         if (touchedTests.isEmpty()) {
@@ -116,6 +120,72 @@ public final class CodexCliUnitTestGenerator {
         );
     }
 
+    public AgentUsage prepareProject(
+            Path projectRoot,
+            String model,
+            TerminalUi ui,
+            boolean showLogs,
+            PrintWriter logWriter
+    ) throws Exception {
+        return prepareProject(projectRoot, model, ui, showLogs, true, logWriter);
+    }
+
+    public AgentUsage prepareProject(
+            Path projectRoot,
+            String model,
+            TerminalUi ui,
+            boolean showLogs,
+            boolean showProgress,
+            PrintWriter logWriter
+    ) throws Exception {
+        ensureCodexAvailable(projectRoot);
+        String basePrompt = promptTemplateService.buildPreparationPrompt(projectRoot);
+        String prompt = basePrompt;
+        AgentUsage totalUsage = AgentUsage.zero();
+
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            String progressLabel = attempt == 1 ? "codex preparing project" : "codex repairing project";
+            String failurePrefix = attempt == 1
+                    ? "Codex failed while preparing the project:"
+                    : "Codex failed while repairing the project:";
+            try {
+                totalUsage = totalUsage.plus(runCodex(
+                        projectRoot,
+                        model,
+                        prompt,
+                        ui,
+                        showLogs,
+                        showProgress,
+                        logWriter,
+                        PREPARATION_TIMEOUT,
+                        progressLabel,
+                        failurePrefix
+                ));
+            } catch (Exception failure) {
+                if (attempt == 3) {
+                    throw failure;
+                }
+                prompt = buildPreparationRetryPrompt(basePrompt, List.of(failure.getMessage()));
+                continue;
+            }
+
+            List<String> readinessIssues = findPreparationIssues(projectRoot);
+            if (readinessIssues.isEmpty()) {
+                return totalUsage;
+            }
+            if (attempt == 3) {
+                throw new IllegalStateException(
+                        "Codex completed preparation but the repository is still not ready:"
+                                + System.lineSeparator()
+                                + String.join(System.lineSeparator(), readinessIssues)
+                );
+            }
+            prompt = buildPreparationRetryPrompt(basePrompt, readinessIssues);
+        }
+
+        throw new IllegalStateException("Project preparation exited without a final readiness result.");
+    }
+
     private void ensureCodexAvailable(Path workingDirectory) {
         if (codexVersion(workingDirectory).isEmpty()) {
             throw new IllegalStateException("Codex CLI is not installed or not available on PATH.");
@@ -123,13 +193,16 @@ public final class CodexCliUnitTestGenerator {
     }
 
     private AgentUsage runCodex(
-            JavaProjectService.JavaClassDescriptor descriptor,
+            Path workingDirectory,
             String model,
             String prompt,
             TerminalUi ui,
             boolean showLogs,
             boolean showProgress,
-            PrintWriter logWriter
+            PrintWriter logWriter,
+            Duration timeout,
+            String progressLabel,
+            String failurePrefix
     ) throws Exception {
         List<String> command = new ArrayList<>();
         command.add("codex");
@@ -153,20 +226,20 @@ public final class CodexCliUnitTestGenerator {
         CodexJsonLogRenderer logRenderer = showLogs ? new CodexJsonLogRenderer(ui, logWriter) : null;
         ProcessExecutor.ExecutionResult result = processExecutor.execute(
                 command,
-                descriptor.projectRoot(),
-                CODEX_TIMEOUT,
+                workingDirectory,
+                timeout,
                 false,
                 logWriter,
                 prompt,
-                progressListener(ui, "codex generating tests for " + descriptor.className(), showLogs, showProgress),
+                progressListener(ui, progressLabel, showLogs, showProgress),
                 logRenderer
         );
         if (result.timedOut()) {
-            throw new IllegalStateException("Codex timed out while generating tests for " + descriptor.className() + ".");
+            throw new IllegalStateException(failurePrefix + System.lineSeparator() + "Timed out.");
         }
         if (result.exitCode() != 0) {
             throw new IllegalStateException(
-                    "Codex failed while generating tests for " + descriptor.className() + ":\n" + tail(result.output())
+                    failurePrefix + System.lineSeparator() + tail(result.output())
             );
         }
         return parseUsage(result.output());
@@ -195,6 +268,39 @@ public final class CodexCliUnitTestGenerator {
             notes.add("Multiple test files changed; using " + generatedTest.testPath().getFileName() + " as the primary result.");
         }
         return notes.isEmpty() ? null : String.join(" ", notes);
+    }
+
+    private List<String> findPreparationIssues(Path projectRoot) {
+        List<String> issues = new ArrayList<>();
+        if (projectService.detectBuildToolIfPresent(projectRoot).isEmpty()) {
+            issues.add("- No Maven or Gradle build file was detected under " + projectRoot + ".");
+        }
+        try {
+            if (coverageReportService.readProjectSnapshot(projectRoot).isEmpty()) {
+                issues.add("- No JaCoCo XML report was found after preparation.");
+            }
+        } catch (Exception exception) {
+            issues.add("- JAIPilot could not read the JaCoCo XML report after preparation: " + exception.getMessage());
+        }
+        return issues;
+    }
+
+    private String buildPreparationRetryPrompt(String basePrompt, List<String> readinessIssues) {
+        String issues = readinessIssues.isEmpty()
+                ? "- Unknown preparation failure."
+                : String.join(System.lineSeparator(), readinessIssues);
+        return basePrompt
+                + System.lineSeparator()
+                + System.lineSeparator()
+                + "The repository is still not ready for target-class test generation."
+                + System.lineSeparator()
+                + "Fix these issues now:"
+                + System.lineSeparator()
+                + issues
+                + System.lineSeparator()
+                + System.lineSeparator()
+                + "Resume from the current workspace state. Rerun the necessary build, test, and JaCoCo coverage commands yourself. "
+                + "Only stop once the repository is buildable, tests pass, and a readable JaCoCo XML report exists.";
     }
 
     private AgentUsage parseUsage(String output) {

@@ -12,6 +12,7 @@ Before editing, read these files if they exist:
 Strategy
 
 - Try to generate unit tests for only one class at a time
+- Reuse the verified build, test, and coverage commands recorded in `.jaipilot/project-memory.md` when present.
 - To generate unit tests you need to identify dependent classes for the source class.
 - Before generating unit tests for the class, understand the code for dependent classes and then proceed to write unit tests
 - Determine the correct test file path and class name from the repository's existing conventions. Do not assume JAIPilot has preselected a target test file for you.

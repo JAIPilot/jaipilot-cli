@@ -44,4 +44,19 @@ class PromptTemplateServiceTest {
         assertFalse(prompt.contains("Supabase"));
         assertFalse(prompt.contains("JAIPilot backend"));
     }
+
+    @Test
+    void buildPreparationPromptIncludesProjectPreparationInstructions() {
+        Path projectRoot = tempDir.resolve("sample");
+
+        String prompt = promptTemplateService.buildPreparationPrompt(projectRoot);
+
+        assertTrue(prompt.contains("Prepare this Java repository so subsequent test generation can succeed reliably."));
+        assertTrue(prompt.contains("Project root: `" + projectRoot + "`"));
+        assertTrue(prompt.contains("Run the relevant build, test, and JaCoCo coverage flow yourself."));
+        assertTrue(prompt.contains("Update `.jaipilot/project-memory.md` with the exact verified build, test, and coverage commands"));
+        assertTrue(prompt.contains("Do not stop until the repository is in a working state"));
+        assertFalse(prompt.contains("Supabase"));
+        assertFalse(prompt.contains("JAIPilot backend"));
+    }
 }

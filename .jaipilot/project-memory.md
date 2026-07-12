@@ -28,7 +28,8 @@ This file is the durable local memory for Codex-driven JAIPilot runs in this rep
 
 Update this file when any of these change:
 
-- preferred test command per build tool
+- preferred build, test, and coverage commands per build tool
+- confirmed JaCoCo XML report path
 - coverage report discovery rules
 - mocking and fixture conventions
 - known module-specific quirks
@@ -39,6 +40,7 @@ Update this file when any of these change:
 - Maven wrapper is preferred only when `mvnw` and `.mvn/wrapper/maven-wrapper.properties` both exist.
 - Gradle wrapper is preferred only when `gradlew` and `gradle/wrapper/gradle-wrapper.properties` both exist.
 - Default coverage threshold is `80%`.
+- Codex is expected to complete a preparation pass that leaves the repository buildable, tests runnable, and coverage refreshable before class-specific generation starts.
 - Codex is expected to determine the final test file path and class name from repository conventions.
 - Codex is expected to own the test-run, fix, and coverage loop during generation.
 - The interactive shell stores history at `~/.jaipilot/history`.

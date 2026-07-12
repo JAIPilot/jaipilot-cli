@@ -63,7 +63,7 @@ public final class TerminalUi {
                 new CommandHint("/generate <class>", "Generate tests for one Java production class."),
                 new CommandHint("/generate all changed", "Generate tests for changed or uncommitted production classes."),
                 new CommandHint("/generate all coverage 80", "Generate tests for classes below the current threshold."),
-                new CommandHint("/generate <class> --show-logs", "Stream live Codex logs during generation."),
+                new CommandHint("/generate <class> --show-logs", "Stream live Codex preparation and generation logs."),
                 new CommandHint("/status", "Show the JaCoCo report summary and classes below threshold."),
                 new CommandHint("/doctor", "Check local Codex, build, and JaCoCo prerequisites."),
                 new CommandHint("/help", "Show interactive shell commands."),
