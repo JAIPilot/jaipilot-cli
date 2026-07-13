@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 public final class ProcessExecutor {
@@ -57,9 +58,36 @@ public final class ProcessExecutor {
             ProgressListener progressListener,
             OutputListener outputListener
     ) throws IOException, InterruptedException {
+        return execute(
+                command,
+                workingDirectory,
+                timeout,
+                verbose,
+                verboseWriter,
+                stdinText,
+                progressListener,
+                outputListener,
+                Map.of()
+        );
+    }
+
+    public ExecutionResult execute(
+            List<String> command,
+            Path workingDirectory,
+            Duration timeout,
+            boolean verbose,
+            PrintWriter verboseWriter,
+            String stdinText,
+            ProgressListener progressListener,
+            OutputListener outputListener,
+            Map<String, String> environmentOverrides
+    ) throws IOException, InterruptedException {
         ProcessBuilder processBuilder = new ProcessBuilder(command)
                 .directory(workingDirectory.toFile())
                 .redirectErrorStream(true);
+        if (environmentOverrides != null && !environmentOverrides.isEmpty()) {
+            processBuilder.environment().putAll(environmentOverrides);
+        }
 
         Process process = processBuilder.start();
         ProgressListener listener = progressListener == null ? ProgressListener.noOp() : progressListener;
