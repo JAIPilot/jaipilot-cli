@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -84,6 +85,7 @@ public final class StatusCommand implements Callable<Integer> {
 
         ui.section("Classes Below Threshold");
         List<List<String>> rows = new ArrayList<>();
+        Map<JavaProjectService.JavaClassDescriptor, Boolean> testPresence = projectService.likelyTestPresence(belowThreshold);
         for (JavaProjectService.JavaClassDescriptor descriptor : belowThreshold) {
             CoverageReportService.ClassCoverage coverage = snapshot.classCoverageByName()
                     .get(descriptor.fullyQualifiedName());
@@ -93,7 +95,7 @@ public final class StatusCommand implements Callable<Integer> {
                     descriptor.fullyQualifiedName(),
                     ui.formatCoverage(lineCoverage, threshold),
                     ui.formatCoverage(branchCoverage, threshold),
-                    ui.formatTestState(projectService.hasLikelyTests(descriptor))
+                    ui.formatTestState(testPresence.getOrDefault(descriptor, false))
             ));
         }
         ui.printTable(List.of("Class", "Line", "Branch", "Tests"), rows);

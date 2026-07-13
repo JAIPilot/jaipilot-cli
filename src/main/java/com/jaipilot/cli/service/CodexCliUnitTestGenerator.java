@@ -7,7 +7,9 @@ import java.io.PrintWriter;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 public final class CodexCliUnitTestGenerator {
@@ -15,6 +17,10 @@ public final class CodexCliUnitTestGenerator {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final Duration PREPARATION_TIMEOUT = Duration.ofMinutes(30);
     private static final Duration CODEX_TIMEOUT = Duration.ofMinutes(20);
+    private static final String MAVEN_OPTS = "MAVEN_OPTS";
+    private static final String MAVEN_TRACKING_PROPERTY = "aether.enhancedLocalRepository.trackingFilename";
+    private static final String MAVEN_TRACKING_OPTION = "-D" + MAVEN_TRACKING_PROPERTY + "=ignore";
+    private static final String GRADLE_USER_HOME = "GRADLE_USER_HOME";
 
     private final ProjectFileService fileService;
     private final JavaProjectService projectService;
@@ -232,7 +238,8 @@ public final class CodexCliUnitTestGenerator {
                 logWriter,
                 prompt,
                 progressListener(ui, progressLabel, showLogs, showProgress),
-                logRenderer
+                logRenderer,
+                buildToolCacheEnvironment(workingDirectory, System.getenv())
         );
         if (result.timedOut()) {
             throw new IllegalStateException(failurePrefix + System.lineSeparator() + "Timed out.");
@@ -362,13 +369,36 @@ public final class CodexCliUnitTestGenerator {
                 .orElse("");
     }
 
+    static Map<String, String> buildToolCacheEnvironment(Path workingDirectory, Map<String, String> currentEnvironment) {
+        Path projectRoot = workingDirectory.toAbsolutePath().normalize();
+        Map<String, String> environment = new LinkedHashMap<>();
+        String mavenOpts = currentEnvironment.getOrDefault(MAVEN_OPTS, "");
+        if (!containsMavenTrackingOverride(mavenOpts)) {
+            environment.put(MAVEN_OPTS, appendJvmOption(mavenOpts, MAVEN_TRACKING_OPTION));
+        }
+        if (!currentEnvironment.containsKey(GRADLE_USER_HOME)) {
+            environment.put(GRADLE_USER_HOME, projectRoot.resolve("build/jaipilot-gradle").normalize().toString());
+        }
+        return environment;
+    }
+
+    private static boolean containsMavenTrackingOverride(String value) {
+        return value != null && value.contains(MAVEN_TRACKING_PROPERTY);
+    }
+
+    private static String appendJvmOption(String existingValue, String option) {
+        if (existingValue == null || existingValue.isBlank()) {
+            return option;
+        }
+        return existingValue.stripTrailing() + " " + option;
+    }
+
     private String quoteIfNeeded(String value) {
         if (value.indexOf(' ') < 0 && value.indexOf('\t') < 0) {
             return value;
         }
         return "\"" + value.replace("\"", "\\\"") + "\"";
     }
-
     private String tail(String output) {
         List<String> lines = output == null ? List.of() : output.lines().toList();
         int start = Math.max(0, lines.size() - 60);

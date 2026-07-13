@@ -14,7 +14,7 @@ This file is the durable local memory for Codex-driven JAIPilot runs in this rep
 - `jaipilot`
   Opens the interactive shell.
 - `jaipilot generate <class>`
-  Generate tests for one class.
+  Generate tests for one class without broad repository preparation.
 - `jaipilot generate --changed`
   Generate tests for uncommitted Java production classes.
 - `jaipilot generate --coverage-below 80`
@@ -40,11 +40,15 @@ Update this file when any of these change:
 - Maven wrapper is preferred only when `mvnw` and `.mvn/wrapper/maven-wrapper.properties` both exist.
 - Gradle wrapper is preferred only when `gradlew` and `gradle/wrapper/gradle-wrapper.properties` both exist.
 - Default coverage threshold is `80%`.
-- Codex is expected to complete a preparation pass that leaves the repository buildable, tests runnable, and coverage refreshable before class-specific generation starts.
+- Explicit class generation skips the repository preparation pass so Codex focuses on the requested class and its generated test.
+- Explicit class generation reports target-class coverage only; focused JaCoCo runs can overwrite whole-project totals with single-test execution data.
+- Batch and coverage modes may run a preparation pass before class-specific generation starts.
 - Codex is expected to determine the final test file path and class name from repository conventions.
 - Codex is expected to own the test-run, fix, and coverage loop during generation.
 - The interactive shell stores history at `~/.jaipilot/history`.
 - The CLI UX favors structured sections, tables, coverage meters, and spinners over raw tool logs.
 - Coverage discovery currently looks for JaCoCo XML reports under:
   - `target/site/jacoco/jacoco.xml`
+  - `target/site/jacoco-*/jacoco.xml`
+  - `target/coverage-reports/**/jacoco.xml`
   - `build/reports/jacoco/**/jacoco.xml`

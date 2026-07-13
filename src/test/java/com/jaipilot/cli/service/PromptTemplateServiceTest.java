@@ -35,8 +35,8 @@ class PromptTemplateServiceTest {
         assertTrue(prompt.contains("Current class under test: `com.example.OrderService`"));
         assertTrue(prompt.contains("Source file: `" + sourcePath + "`"));
         assertTrue(prompt.contains("Before editing, read these files if they exist:"));
-        assertTrue(prompt.contains("keep iterating until the generated tests pass"));
-        assertTrue(prompt.contains("reaches at least 80% line coverage"));
+        assertTrue(prompt.contains("keep iterating until that target test passes"));
+        assertTrue(prompt.contains("report that blocker instead of fixing unrelated code or tests"));
         assertTrue(prompt.contains("isolated sandbox workspace in parallel"));
         assertFalse(prompt.contains("package com.example; class OrderService {}"));
         assertFalse(prompt.contains("Target test class:"));

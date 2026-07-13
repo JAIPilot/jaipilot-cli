@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -128,6 +129,24 @@ public final class JavaProjectService {
         return Files.isRegularFile(conventionalTestPath(descriptor)) || !findLikelyTests(descriptor).isEmpty();
     }
 
+    public Map<JavaClassDescriptor, Boolean> likelyTestPresence(Collection<JavaClassDescriptor> descriptors) {
+        Map<Path, List<JavaTestDescriptor>> testsByModule = new HashMap<>();
+        Map<JavaClassDescriptor, Boolean> results = new LinkedHashMap<>();
+        for (JavaClassDescriptor descriptor : descriptors) {
+            if (Files.isRegularFile(conventionalTestPath(descriptor))) {
+                results.put(descriptor, true);
+                continue;
+            }
+            List<JavaTestDescriptor> moduleTests = testsByModule.computeIfAbsent(
+                    descriptor.moduleRoot(),
+                    this::scanTestDescriptors
+            );
+            boolean hasLikelyTest = moduleTests.stream()
+                    .anyMatch(candidate -> scoreTestCandidate(descriptor, candidate) > 0);
+            results.put(descriptor, hasLikelyTest);
+        }
+        return Map.copyOf(results);
+    }
     public List<JavaTestDescriptor> findLikelyTests(JavaClassDescriptor descriptor) {
         List<ScoredTestDescriptor> candidates = scanTestDescriptors(descriptor.moduleRoot()).stream()
                 .map(candidate -> new ScoredTestDescriptor(candidate, scoreTestCandidate(descriptor, candidate)))
@@ -304,19 +323,27 @@ public final class JavaProjectService {
 
     private int scoreTestCandidate(JavaClassDescriptor sourceDescriptor, JavaTestDescriptor testDescriptor) {
         int score = 0;
+        boolean hasClassRelevance = false;
         if (testDescriptor.className().equals(sourceDescriptor.className() + "Test")) {
             score += 8;
+            hasClassRelevance = true;
         } else if (testDescriptor.className().contains(sourceDescriptor.className())) {
             score += 4;
-        }
-        if (testDescriptor.packageName().equals(sourceDescriptor.packageName())) {
-            score += 2;
+            hasClassRelevance = true;
         }
         String testContents = fileService.readFile(testDescriptor.testPath());
         if (testContents.contains(sourceDescriptor.fullyQualifiedName())) {
             score += 8;
+            hasClassRelevance = true;
         } else if (containsWord(testContents, sourceDescriptor.className())) {
             score += 3;
+            hasClassRelevance = true;
+        }
+        if (!hasClassRelevance) {
+            return 0;
+        }
+        if (testDescriptor.packageName().equals(sourceDescriptor.packageName())) {
+            score += 2;
         }
         return score;
     }

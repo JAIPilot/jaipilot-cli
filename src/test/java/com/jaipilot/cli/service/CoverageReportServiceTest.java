@@ -49,4 +49,30 @@ class CoverageReportServiceTest {
         assertEquals(30.0d, snapshot.classCoverage("com.example.LegacyService").orElseThrow().lineCoverage(), 0.0001d);
         assertTrue(snapshot.classCoverage("com.example.MissingService").isEmpty());
     }
+
+    @Test
+    void readProjectSnapshotFindsCustomMavenCoverageReportsDirectory() throws Exception {
+        Path projectRoot = tempDir.resolve("sample-custom");
+        Path reportPath = projectRoot.resolve("target/coverage-reports/jacoco-ut/jacoco.xml");
+        Files.createDirectories(reportPath.getParent());
+        Files.writeString(reportPath, """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <report name="sample">
+                  <package name="com/example">
+                    <class name="com/example/OrderService">
+                      <counter type="LINE" missed="0" covered="4"/>
+                      <counter type="BRANCH" missed="0" covered="0"/>
+                    </class>
+                  </package>
+                  <counter type="LINE" missed="0" covered="4"/>
+                  <counter type="BRANCH" missed="0" covered="0"/>
+                </report>
+                """);
+
+        CoverageReportService.CoverageSnapshot snapshot = coverageReportService.readProjectSnapshot(projectRoot)
+                .orElseThrow();
+
+        assertEquals(reportPath, snapshot.reportPath());
+        assertEquals(100.0d, snapshot.classCoverage("com.example.OrderService").orElseThrow().lineCoverage(), 0.0001d);
+    }
 }

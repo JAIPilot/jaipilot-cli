@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletionService;
 import java.util.concurrent.ExecutionException;
@@ -72,7 +73,7 @@ public final class GenerateCommand implements Callable<Integer> {
 
     @Option(
             names = "--show-logs",
-            description = "Stream live Codex logs during preparation and generation."
+            description = "Stream live Codex logs."
     )
     private boolean showLogs;
 
@@ -115,7 +116,7 @@ public final class GenerateCommand implements Callable<Integer> {
         CoverageReportService.CoverageSnapshot startingSnapshot = coverageReportService.readProjectSnapshot(projectRoot)
                 .orElse(null);
 
-        ui.printBanner("Preparing project and generating Java tests locally with Codex");
+        ui.printBanner("Generating Java tests locally with Codex");
         LinkedHashMap<String, String> metadata = new LinkedHashMap<>();
         metadata.put("project", projectRoot.toString());
         metadata.put("agent", agent.toLowerCase());
@@ -123,7 +124,98 @@ public final class GenerateCommand implements Callable<Integer> {
         metadata.put("logs", showLogs ? "live" : "summary");
         ui.printKeyValues(metadata);
 
+        CodexCliUnitTestGenerator.AgentUsage preparationUsage = prepareProjectIfRequired(projectRoot, ui, out);
+
+        List<JavaProjectService.JavaClassDescriptor> targets = resolveTargets(projectRoot);
+        if (targets.isEmpty()) {
+            ui.warn("No matching Java production classes found.");
+            return CommandLine.ExitCode.OK;
+        }
+
+        CoverageReportService.CoverageSnapshot baselineSnapshot = coverageReportService.readProjectSnapshot(projectRoot)
+                .orElse(null);
+        ui.section("Targets");
+        ui.info("Resolved %d target class%s.".formatted(targets.size(), targets.size() == 1 ? "" : "es"));
+        ui.info(isParallelBatch(targets)
+                ? "Execution mode: parallel isolated x%d".formatted(resolveParallelism(targets.size()))
+                : "Execution mode: sequential");
+        ui.blankLine();
+        if (baselineSnapshot == null) {
+            ui.warn("Coverage baseline unavailable. JAIPilot will read any JaCoCo report that Codex refreshes during generation.");
+        } else {
+            ui.section("Baseline");
+            ui.printCoverageMeter("line", baselineSnapshot.totalLineCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD);
+            ui.printCoverageMeter("branch", baselineSnapshot.totalBranchCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD);
+        }
+        ui.section("Queue");
+        ui.printTable(
+                List.of("Class", "Line", "Branch", "Tests"),
+                queueRows(targets, baselineSnapshot, ui)
+        );
+
+        RunSummary runSummary = isParallelBatch(targets)
+                ? runParallelGeneration(projectRoot, targets, baselineSnapshot, model, ui, errUi, out)
+                : runSequentialGeneration(targets, baselineSnapshot, model, ui, errUi, out);
+
+        CodexCliUnitTestGenerator.AgentUsage totalUsage = preparationUsage.plus(runSummary.totalUsage());
+        ui.section("Run Summary");
+        LinkedHashMap<String, String> summary = new LinkedHashMap<>();
+        summary.put("successful classes", String.valueOf(runSummary.successCount()));
+        summary.put("failed classes", String.valueOf(runSummary.failureCount()));
+        summary.put(
+                "total tokens",
+                "input=%d cached=%d output=%d reasoning=%d total=%d".formatted(
+                        totalUsage.inputTokens(),
+                        totalUsage.cachedInputTokens(),
+                        totalUsage.outputTokens(),
+                        totalUsage.reasoningOutputTokens(),
+                        totalUsage.totalTokens()
+                )
+        );
+        ui.printKeyValues(summary);
+        if (!runSummary.failedClasses().isEmpty()) {
+            ui.printTable(
+                    List.of("Failed class"),
+                    runSummary.failedClasses().stream().map(value -> List.of(value)).toList()
+            );
+        }
+        if (requiresPreparation()) {
+            CoverageReportService.CoverageSnapshot finalSnapshot = coverageReportService.readProjectSnapshot(projectRoot)
+                    .orElse(null);
+            printCoverageSummary(ui, startingSnapshot != null ? startingSnapshot : baselineSnapshot, finalSnapshot);
+            printRemainingThresholdFailures(ui, projectRoot, finalSnapshot);
+        }
+        return runSummary.failureCount() == 0 ? CommandLine.ExitCode.OK : CommandLine.ExitCode.SOFTWARE;
+    }
+
+    private void validateTargetMode() {
+        int modes = (isExplicitClassTarget() ? 1 : 0) + (changed ? 1 : 0) + (coverageBelow != null ? 1 : 0);
+        if (modes != 1) {
+            throw new CommandLine.ParameterException(
+                    spec.commandLine(),
+                    "Choose exactly one target mode: `<class>`, `--changed`, or `--coverage-below <percent>`."
+            );
+        }
+        if (coverageBelow != null && (coverageBelow <= 0 || coverageBelow > 100)) {
+            throw new CommandLine.ParameterException(
+                    spec.commandLine(),
+                    "--coverage-below must be between 0 and 100."
+            );
+        }
+    }
+
+    private CodexCliUnitTestGenerator.AgentUsage prepareProjectIfRequired(
+            Path projectRoot,
+            TerminalUi ui,
+            PrintWriter out
+    ) {
         ui.section("Preparation");
+        if (!requiresPreparation()) {
+            ui.info("Skipped for explicit class target. JAIPilot will validate the generated test during generation.");
+            ui.blankLine();
+            return CodexCliUnitTestGenerator.AgentUsage.zero();
+        }
+
         CodexCliUnitTestGenerator.AgentUsage preparationUsage;
         try {
             preparationUsage = generator.prepareProject(
@@ -147,84 +239,8 @@ public final class GenerateCommand implements Callable<Integer> {
                 )
         );
         ui.blankLine();
-
-        List<JavaProjectService.JavaClassDescriptor> targets = resolveTargets(projectRoot);
-        if (targets.isEmpty()) {
-            ui.warn("No matching Java production classes found.");
-            return CommandLine.ExitCode.OK;
-        }
-
-        CoverageReportService.CoverageSnapshot baselineSnapshot = coverageReportService.readProjectSnapshot(projectRoot)
-                .orElse(null);
-        ui.section("Targets");
-        ui.info("Resolved %d target class%s.".formatted(targets.size(), targets.size() == 1 ? "" : "es"));
-        ui.info(isParallelBatch(targets)
-                ? "Execution mode: parallel isolated x%d".formatted(resolveParallelism(targets.size()))
-                : "Execution mode: sequential");
-        ui.blankLine();
-        if (baselineSnapshot == null) {
-            ui.warn("Coverage baseline unavailable after preparation. JAIPilot will read any JaCoCo report that Codex refreshes during generation.");
-        } else {
-            ui.section("Baseline");
-            ui.printCoverageMeter("line", baselineSnapshot.totalLineCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD);
-            ui.printCoverageMeter("branch", baselineSnapshot.totalBranchCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD);
-        }
-        ui.section("Queue");
-        ui.printTable(
-                List.of("Class", "Line", "Branch", "Tests"),
-                queueRows(targets, baselineSnapshot, ui)
-        );
-
-        RunSummary runSummary = isParallelBatch(targets)
-                ? runParallelGeneration(projectRoot, targets, baselineSnapshot, model, ui, errUi, out)
-                : runSequentialGeneration(targets, baselineSnapshot, model, ui, errUi, out);
-
-        CoverageReportService.CoverageSnapshot finalSnapshot = coverageReportService.readProjectSnapshot(projectRoot)
-                .orElse(null);
-        CodexCliUnitTestGenerator.AgentUsage totalUsage = preparationUsage.plus(runSummary.totalUsage());
-        ui.section("Run Summary");
-        LinkedHashMap<String, String> summary = new LinkedHashMap<>();
-        summary.put("successful classes", String.valueOf(runSummary.successCount()));
-        summary.put("failed classes", String.valueOf(runSummary.failureCount()));
-        summary.put(
-                "total tokens",
-                "input=%d cached=%d output=%d reasoning=%d total=%d".formatted(
-                        totalUsage.inputTokens(),
-                        totalUsage.cachedInputTokens(),
-                        totalUsage.outputTokens(),
-                        totalUsage.reasoningOutputTokens(),
-                        totalUsage.totalTokens()
-                )
-        );
-        ui.printKeyValues(summary);
-        if (!runSummary.failedClasses().isEmpty()) {
-            ui.printTable(
-                    List.of("Failed class"),
-                    runSummary.failedClasses().stream().map(value -> List.of(value)).toList()
-            );
-        }
-        printCoverageSummary(ui, startingSnapshot != null ? startingSnapshot : baselineSnapshot, finalSnapshot);
-        printRemainingThresholdFailures(ui, projectRoot, finalSnapshot);
-        return runSummary.failureCount() == 0 ? CommandLine.ExitCode.OK : CommandLine.ExitCode.SOFTWARE;
+        return preparationUsage;
     }
-
-    private void validateTargetMode() {
-        boolean hasExplicitSelector = selector != null && !selector.isBlank() && !"all".equalsIgnoreCase(selector);
-        int modes = (hasExplicitSelector ? 1 : 0) + (changed ? 1 : 0) + (coverageBelow != null ? 1 : 0);
-        if (modes != 1) {
-            throw new CommandLine.ParameterException(
-                    spec.commandLine(),
-                    "Choose exactly one target mode: `<class>`, `--changed`, or `--coverage-below <percent>`."
-            );
-        }
-        if (coverageBelow != null && (coverageBelow <= 0 || coverageBelow > 100)) {
-            throw new CommandLine.ParameterException(
-                    spec.commandLine(),
-                    "--coverage-below must be between 0 and 100."
-            );
-        }
-    }
-
     private RunSummary runSequentialGeneration(
             List<JavaProjectService.JavaClassDescriptor> targets,
             CoverageReportService.CoverageSnapshot baselineSnapshot,
@@ -394,8 +410,7 @@ public final class GenerateCommand implements Callable<Integer> {
     }
 
     private List<JavaProjectService.JavaClassDescriptor> resolveTargets(Path projectRoot) {
-        boolean hasExplicitSelector = selector != null && !selector.isBlank() && !"all".equalsIgnoreCase(selector);
-        if (hasExplicitSelector) {
+        if (isExplicitClassTarget()) {
             return List.of(projectService.resolveClass(projectRoot, selector));
         }
         if (changed) {
@@ -410,6 +425,7 @@ public final class GenerateCommand implements Callable<Integer> {
             TerminalUi ui
     ) {
         List<List<String>> rows = new ArrayList<>();
+        Map<JavaProjectService.JavaClassDescriptor, Boolean> testPresence = projectService.likelyTestPresence(targets);
         for (JavaProjectService.JavaClassDescriptor descriptor : targets) {
             CoverageReportService.ClassCoverage coverage = snapshot == null
                     ? null
@@ -418,7 +434,7 @@ public final class GenerateCommand implements Callable<Integer> {
                     descriptor.fullyQualifiedName(),
                     ui.formatCoverage(coverage == null ? null : coverage.lineCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
                     ui.formatCoverage(coverage == null ? null : coverage.branchCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
-                    formatTestState(descriptor, ui)
+                    ui.formatTestState(testPresence.getOrDefault(descriptor, false))
             ));
         }
         return rows;
@@ -483,7 +499,7 @@ public final class GenerateCommand implements Callable<Integer> {
                         StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
                 ui.formatCoverage(baselineClassCoverage == null ? null : baselineClassCoverage.branchCoverage(),
                         StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
-                formatTestState(descriptor, ui)
+                ui.formatTestState(projectService.hasLikelyTests(descriptor))
         );
     }
 
@@ -584,6 +600,7 @@ public final class GenerateCommand implements Callable<Integer> {
                 belowThreshold.size()
         ));
         List<List<String>> rows = new ArrayList<>();
+        Map<JavaProjectService.JavaClassDescriptor, Boolean> testPresence = projectService.likelyTestPresence(belowThreshold);
         for (JavaProjectService.JavaClassDescriptor descriptor : belowThreshold) {
             CoverageReportService.ClassCoverage coverage = finalSnapshot.classCoverage(descriptor.fullyQualifiedName())
                     .orElse(new CoverageReportService.ClassCoverage(descriptor.fullyQualifiedName(), 0.0d, 0.0d));
@@ -591,18 +608,14 @@ public final class GenerateCommand implements Callable<Integer> {
                     descriptor.fullyQualifiedName(),
                     ui.formatCoverage(coverage.lineCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
                     ui.formatCoverage(coverage.branchCoverage(), StatusCommand.DEFAULT_COVERAGE_THRESHOLD),
-                    formatTestState(descriptor, ui)
+                    ui.formatTestState(testPresence.getOrDefault(descriptor, false))
             ));
         }
         ui.printTable(List.of("Class", "Line", "Branch", "Tests"), rows);
     }
 
-    private String formatTestState(JavaProjectService.JavaClassDescriptor descriptor, TerminalUi ui) {
-        return ui.formatTestState(projectService.hasLikelyTests(descriptor));
-    }
-
     private String targetModeDescription() {
-        if (selector != null && !selector.isBlank() && !"all".equalsIgnoreCase(selector)) {
+        if (isExplicitClassTarget()) {
             return selector;
         }
         if (changed) {
@@ -618,6 +631,13 @@ public final class GenerateCommand implements Callable<Integer> {
         return targets.size() > 1 && (changed || coverageBelow != null);
     }
 
+    private boolean requiresPreparation() {
+        return changed || coverageBelow != null;
+    }
+
+    private boolean isExplicitClassTarget() {
+        return selector != null && !selector.isBlank() && !"all".equalsIgnoreCase(selector);
+    }
     private int resolveParallelism(int targetCount) {
         int processors = Math.max(2, Runtime.getRuntime().availableProcessors());
         return Math.min(targetCount, Math.max(2, Math.min(processors, 4)));

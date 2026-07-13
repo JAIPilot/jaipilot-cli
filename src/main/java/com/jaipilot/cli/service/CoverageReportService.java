@@ -25,8 +25,7 @@ public final class CoverageReportService {
         try (var paths = Files.walk(projectRoot)) {
             paths.filter(Files::isRegularFile)
                     .filter(path -> path.getFileName().toString().equals("jacoco.xml"))
-                    .filter(path -> normalize(path).contains("/target/site/jacoco/")
-                            || normalize(path).contains("/build/reports/jacoco/"))
+                    .filter(this::isKnownCoverageReportLocation)
                     .forEach(matches::add);
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to scan coverage reports under " + projectRoot, exception);
@@ -109,6 +108,14 @@ public final class CoverageReportService {
 
     private String normalize(Path path) {
         return path.toString().replace('\\', '/');
+    }
+
+    private boolean isKnownCoverageReportLocation(Path path) {
+        String normalized = normalize(path);
+        return normalized.contains("/target/site/jacoco/")
+                || normalized.contains("/target/site/jacoco-")
+                || normalized.contains("/target/coverage-reports/")
+                || normalized.contains("/build/reports/jacoco/");
     }
 
     public record CoverageSnapshot(

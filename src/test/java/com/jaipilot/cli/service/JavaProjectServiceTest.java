@@ -1,11 +1,13 @@
 package com.jaipilot.cli.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -132,6 +134,44 @@ class JavaProjectServiceTest {
                         .map(JavaProjectService.JavaTestDescriptor::fullyQualifiedName)
                         .toList()
         );
+    }
+
+    @Test
+    void likelyTestPresenceChecksManyClassesWithOneModuleScan() throws Exception {
+        Path projectRoot = tempDir.resolve("sample-batch-tests");
+        Files.createDirectories(projectRoot);
+        Files.writeString(projectRoot.resolve("pom.xml"), "<project/>");
+        Path orderPath = projectRoot.resolve("src/main/java/com/example/OrderService.java");
+        Path legacyPath = projectRoot.resolve("src/main/java/com/example/LegacyService.java");
+        Path missingPath = projectRoot.resolve("src/main/java/com/example/MissingService.java");
+        writeJava(orderPath, "OrderService");
+        writeJava(legacyPath, "LegacyService");
+        writeJava(missingPath, "MissingService");
+        writeJava(projectRoot.resolve("src/test/java/com/example/OrderServiceTest.java"), "OrderServiceTest");
+        Path legacyTest = projectRoot.resolve("src/test/java/com/example/LegacyCoverageSpec.java");
+        Files.createDirectories(legacyTest.getParent());
+        Files.writeString(legacyTest, """
+                package com.example;
+
+                class LegacyCoverageSpec {
+                    void mentionsCut() {
+                        new LegacyService();
+                    }
+                }
+                """);
+
+        JavaProjectService service = new JavaProjectService(new ProjectFileService(), new CoverageReportService());
+        JavaProjectService.JavaClassDescriptor order = service.resolveClass(projectRoot, orderPath.toString());
+        JavaProjectService.JavaClassDescriptor legacy = service.resolveClass(projectRoot, legacyPath.toString());
+        JavaProjectService.JavaClassDescriptor missing = service.resolveClass(projectRoot, missingPath.toString());
+
+        Map<JavaProjectService.JavaClassDescriptor, Boolean> testPresence = service.likelyTestPresence(
+                List.of(order, legacy, missing)
+        );
+
+        assertTrue(testPresence.get(order));
+        assertTrue(testPresence.get(legacy));
+        assertFalse(testPresence.get(missing));
     }
 
     private void writeJava(Path path, String className) throws Exception {
