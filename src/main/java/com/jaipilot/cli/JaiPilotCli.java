@@ -7,6 +7,8 @@ import com.jaipilot.cli.service.CoverageReportService;
 import com.jaipilot.cli.service.InteractiveShell;
 import com.jaipilot.cli.service.JavaProjectService;
 import com.jaipilot.cli.service.ProjectFileService;
+import com.jaipilot.cli.service.StartupUpdateService;
+import java.io.Console;
 import java.util.concurrent.Callable;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -40,7 +42,16 @@ public final class JaiPilotCli implements Callable<Integer> {
 
     @Override
     public Integer call() {
-        if (System.console() != null) {
+        Console console = System.console();
+        if (console != null) {
+            StartupUpdateService.Result updateResult = StartupUpdateService.createDefault().checkForUpdate(
+                    console::readLine,
+                    spec.commandLine().getOut(),
+                    spec.commandLine().getErr()
+            );
+            if (updateResult == StartupUpdateService.Result.UPDATED) {
+                return CommandLine.ExitCode.OK;
+            }
             InteractiveShell shell = new InteractiveShell(
                     new JavaProjectService(new ProjectFileService(), new CoverageReportService())
             );

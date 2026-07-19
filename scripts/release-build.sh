@@ -1,5 +1,9 @@
 #!/usr/bin/env sh
 set -eu
+
+LC_ALL=C
+LANG=C
+export LC_ALL LANG
 # ./scripts/release-build.sh --version 1.0.0 --push
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)

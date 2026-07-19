@@ -1,6 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
+LC_ALL=C
+LANG=C
+export LC_ALL LANG
+
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 TARGET_DIR="$REPO_ROOT/target"
@@ -106,7 +110,7 @@ RUNTIME_DIR="$TARGET_DIR/runtime-image-$PLATFORM_CLASSIFIER"
 ARCHIVE_PATH="$DIST_DIR/$APP_NAME.tar.gz"
 
 rm -rf "$APP_DIR" "$RUNTIME_DIR"
-mkdir -p "$APP_DIR/bin" "$APP_DIR/lib" "$DIST_DIR"
+mkdir -p "$APP_DIR/bin" "$APP_DIR/lib" "$APP_DIR/libexec" "$DIST_DIR"
 
 jlink \
   --add-modules "$MODULES" \
@@ -119,6 +123,8 @@ jlink \
 cp "$REPO_ROOT/src/main/dist/bin/jaipilot" "$APP_DIR/bin/jaipilot"
 chmod +x "$APP_DIR/bin/jaipilot"
 cp "$SHADOW_JAR" "$APP_DIR/lib/jaipilot.jar"
+cp "$REPO_ROOT/install.sh" "$APP_DIR/libexec/install.sh"
+chmod +x "$APP_DIR/libexec/install.sh"
 cp -R "$RUNTIME_DIR" "$APP_DIR/runtime"
 
 rm -f "$ARCHIVE_PATH"

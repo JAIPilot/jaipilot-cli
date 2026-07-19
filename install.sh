@@ -1,6 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
+LC_ALL=C
+LANG=C
+export LC_ALL LANG
+
 REPO="JAIPilot/jaipilot-cli"
 PREFIX="${HOME}/.local"
 BIN_DIR=""
@@ -11,6 +15,10 @@ RESOLVED_PLATFORM=""
 ARCHIVE_URL=""
 CHECKSUM_URL=""
 PLATFORM=""
+WRITE_BIN_LINK=1
+LOCK_DIR=""
+LOCK_HELD=0
+CURRENT_LINK_TMP=""
 
 usage() {
   cat <<'EOF'
@@ -28,6 +36,7 @@ Options:
   --bin-dir <dir>          Explicit bin directory. Overrides --prefix/bin.
   --app-dir <dir>          Explicit app directory. Overrides --prefix/share/jaipilot.
   --lib-dir <dir>          Deprecated alias for --app-dir.
+  --no-bin-link            Keep the existing external bin launcher unchanged.
   -h, --help               Show this help text.
 EOF
 }
@@ -53,6 +62,54 @@ contains_path_entry() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
+}
+
+validate_version() {
+  case "$1" in
+    ''|*[!0-9.]*) die "Version must look like 1.0.0" ;;
+  esac
+  printf '%s\n' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
+    || die "Version must look like 1.0.0"
+}
+
+release_install_lock() {
+  [ "$LOCK_HELD" -eq 1 ] || return
+  lock_owner=""
+  [ ! -f "$LOCK_DIR/pid" ] || lock_owner=$(cat "$LOCK_DIR/pid")
+  if [ -z "$lock_owner" ] || [ "$lock_owner" = "$$" ]; then
+    rm -f "$LOCK_DIR/pid"
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+  fi
+  LOCK_HELD=0
+}
+
+cleanup() {
+  [ -z "$CURRENT_LINK_TMP" ] || rm -f "$CURRENT_LINK_TMP"
+  release_install_lock
+  rm -rf "$TMP_DIR"
+}
+
+acquire_install_lock() {
+  LOCK_DIR="$APP_DIR/.install-lock"
+  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    owner_pid=""
+    [ ! -f "$LOCK_DIR/pid" ] || owner_pid=$(cat "$LOCK_DIR/pid")
+    case "$owner_pid" in
+      ''|*[!0-9]*)
+        die "Another JAIPilot install is using $APP_DIR"
+        ;;
+      *)
+        if kill -0 "$owner_pid" 2>/dev/null; then
+          die "Another JAIPilot install is using $APP_DIR (PID $owner_pid)"
+        fi
+        ;;
+    esac
+    rm -f "$LOCK_DIR/pid"
+    rmdir "$LOCK_DIR" 2>/dev/null || die "Could not clear stale install lock: $LOCK_DIR"
+    mkdir "$LOCK_DIR" 2>/dev/null || die "Another JAIPilot install started for $APP_DIR"
+  fi
+  LOCK_HELD=1
+  printf '%s\n' "$$" > "$LOCK_DIR/pid"
 }
 
 checksum_command() {
@@ -222,6 +279,10 @@ while [ "$#" -gt 0 ]; do
       APP_DIR=$2
       shift 2
       ;;
+    --no-bin-link)
+      WRITE_BIN_LINK=0
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -238,14 +299,19 @@ done
 require_command curl
 require_command tar
 require_command mktemp
+require_command grep
 
 RESOLVED_VERSION=$(resolve_version)
+validate_version "$RESOLVED_VERSION"
 RESOLVED_PLATFORM=$(resolve_platform)
 ARCHIVE_URL=$(resolve_archive_url)
 CHECKSUM_URL=$(resolve_checksum_url "$ARCHIVE_URL")
 
 TMP_DIR=$(mktemp -d)
-trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
+trap cleanup EXIT INT TERM
+
+mkdir -p "$(dirname "$APP_DIR")" "$APP_DIR"
+acquire_install_lock
 
 ARCHIVE_PATH="$TMP_DIR/jaipilot.tar.gz"
 CHECKSUM_PATH="$TMP_DIR/jaipilot.tar.gz.sha256"
@@ -264,15 +330,27 @@ EXTRACTED_DIR=$(find "$TMP_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)
 [ -x "$EXTRACTED_DIR/bin/jaipilot" ] || die "Downloaded archive is missing bin/jaipilot."
 [ -x "$EXTRACTED_DIR/runtime/bin/java" ] || die "Downloaded archive is missing the bundled Java runtime."
 
-mkdir -p "$BIN_DIR" "$(dirname "$APP_DIR")"
+if [ "$WRITE_BIN_LINK" -eq 1 ]; then
+  mkdir -p "$BIN_DIR"
+fi
 mkdir -p "$APP_DIR/bin" "$APP_DIR/versions"
+
+if [ -e "$APP_DIR/current" ] && [ ! -L "$APP_DIR/current" ]; then
+  die "Current release path is not a symlink: $APP_DIR/current"
+fi
 
 VERSION_DIR="$APP_DIR/versions/$RESOLVED_VERSION"
 rm -rf "$VERSION_DIR"
 mv "$EXTRACTED_DIR" "$VERSION_DIR"
 
-rm -f "$APP_DIR/current"
-ln -s "versions/$RESOLVED_VERSION" "$APP_DIR/current"
+CURRENT_LINK_TMP="$APP_DIR/.current.$$"
+rm -f "$CURRENT_LINK_TMP"
+ln -s "versions/$RESOLVED_VERSION" "$CURRENT_LINK_TMP"
+case "$(resolve_os)" in
+  macos) mv -fh "$CURRENT_LINK_TMP" "$APP_DIR/current" ;;
+  linux) mv -fT "$CURRENT_LINK_TMP" "$APP_DIR/current" ;;
+esac
+CURRENT_LINK_TMP=""
 
 cat > "$APP_DIR/bin/jaipilot" <<EOF
 #!/usr/bin/env sh
@@ -283,13 +361,15 @@ EOF
 
 chmod +x "$APP_DIR/bin/jaipilot"
 
-cat > "$BIN_DIR/jaipilot" <<EOF
+if [ "$WRITE_BIN_LINK" -eq 1 ]; then
+  cat > "$BIN_DIR/jaipilot" <<EOF
 #!/usr/bin/env sh
 set -eu
 exec "$APP_DIR/bin/jaipilot" "\$@"
 EOF
 
-chmod +x "$BIN_DIR/jaipilot"
+  chmod +x "$BIN_DIR/jaipilot"
+fi
 
 echo "Installed JAIPilot"
 echo "  Version: $RESOLVED_VERSION"
@@ -299,12 +379,17 @@ echo "  App: $APP_DIR"
 echo "  Current: $APP_DIR/current"
 echo "  Payload: $VERSION_DIR"
 echo "  Runtime: $APP_DIR/current/runtime/bin/java"
-echo "  Launcher: $BIN_DIR/jaipilot"
+echo "  App launcher: $APP_DIR/bin/jaipilot"
 
-if contains_path_entry "$BIN_DIR"; then
-  echo "  PATH: $BIN_DIR is already on PATH"
+if [ "$WRITE_BIN_LINK" -eq 1 ]; then
+  echo "  Launcher: $BIN_DIR/jaipilot"
+  if contains_path_entry "$BIN_DIR"; then
+    echo "  PATH: $BIN_DIR is already on PATH"
+  else
+    echo "  PATH: add $BIN_DIR to your PATH"
+  fi
 else
-  echo "  PATH: add $BIN_DIR to your PATH"
+  echo "  Launcher: unchanged (--no-bin-link)"
 fi
 
 echo

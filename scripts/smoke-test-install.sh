@@ -1,6 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
+LC_ALL=C
+LANG=C
+export LC_ALL LANG
+
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 DIST_DIR="$REPO_ROOT/target/distributions"
@@ -104,6 +108,38 @@ printf '%s  %s\n' "$(compute_sha256 "$TAR_GZ")" "$(basename "$TAR_GZ")" > "$CHEC
 rm -rf "$SMOKE_DIR"
 mkdir -p "$SMOKE_DIR"
 
+mkdir -p "$SMOKE_DIR/security-app/victim"
+printf 'keep\n' > "$SMOKE_DIR/security-app/victim/marker"
+MALICIOUS_VERSION=$(printf '1.0.0\n../../../victim')
+if "$REPO_ROOT/install.sh" \
+  --version "$MALICIOUS_VERSION" \
+  --archive-url "file://$TAR_GZ" \
+  --checksum-url "file://$CHECKSUM_FILE" \
+  --bin-dir "$SMOKE_DIR/security-bin" \
+  --app-dir "$SMOKE_DIR/security-app" \
+  > "$SMOKE_DIR/invalid-version.log" 2>&1; then
+  die "Installer accepted a path-traversal version"
+fi
+grep -Fq "Version must look like 1.0.0" "$SMOKE_DIR/invalid-version.log" \
+  || die "Installer did not report an invalid version cleanly"
+[ -f "$SMOKE_DIR/security-app/victim/marker" ] || die "Invalid version escaped the versions directory"
+
+mkdir -p "$SMOKE_DIR/lock-app/.install-lock"
+printf '%s\n' "$$" > "$SMOKE_DIR/lock-app/.install-lock/pid"
+if "$REPO_ROOT/install.sh" \
+  --version "$INSTALL_VERSION" \
+  --archive-url "file://$TAR_GZ" \
+  --checksum-url "file://$CHECKSUM_FILE" \
+  --app-dir "$SMOKE_DIR/lock-app" \
+  --no-bin-link \
+  > "$SMOKE_DIR/active-lock.log" 2>&1; then
+  die "Installer ignored an active install lock"
+fi
+grep -Fq "Another JAIPilot install is using" "$SMOKE_DIR/active-lock.log" \
+  || die "Installer did not report the active install lock cleanly"
+[ "$(cat "$SMOKE_DIR/lock-app/.install-lock/pid")" = "$$" ] \
+  || die "Installer changed another process's active lock"
+
 "$REPO_ROOT/install.sh" \
   --version "$INSTALL_VERSION" \
   --archive-url "file://$TAR_GZ" \
@@ -113,7 +149,42 @@ mkdir -p "$SMOKE_DIR"
 
 [ -L "$SMOKE_DIR/app/current" ] || die "Install did not create the current symlink"
 [ -x "$SMOKE_DIR/app/bin/jaipilot" ] || die "Install did not create the stable app launcher"
+[ -x "$SMOKE_DIR/app/current/libexec/install.sh" ] || die "Distribution did not include the self-update installer"
 "$SMOKE_DIR/bin/jaipilot" --version
+
+EXTERNAL_LAUNCHER_SHA256=$(compute_sha256 "$SMOKE_DIR/bin/jaipilot")
+"$SMOKE_DIR/app/current/libexec/install.sh" \
+  --version "$INSTALL_VERSION" \
+  --archive-url "file://$TAR_GZ" \
+  --checksum-url "file://$CHECKSUM_FILE" \
+  --bin-dir "$SMOKE_DIR/ignored-bin" \
+  --app-dir "$SMOKE_DIR/app" \
+  --no-bin-link
+
+[ ! -e "$SMOKE_DIR/ignored-bin/jaipilot" ] || die "--no-bin-link created an external launcher"
+[ "$EXTERNAL_LAUNCHER_SHA256" = "$(compute_sha256 "$SMOKE_DIR/bin/jaipilot")" ] \
+  || die "--no-bin-link changed the existing external launcher"
+[ -L "$SMOKE_DIR/app/current" ] || die "Self-update did not preserve the current symlink"
+[ -x "$SMOKE_DIR/app/bin/jaipilot" ] || die "Self-update did not preserve the stable app launcher"
+"$SMOKE_DIR/app/bin/jaipilot" --version
+"$SMOKE_DIR/bin/jaipilot" --version
+
+rm -f "$SMOKE_DIR/app/current"
+mkdir -p "$SMOKE_DIR/app/current"
+if "$REPO_ROOT/install.sh" \
+  --version "$INSTALL_VERSION" \
+  --archive-url "file://$TAR_GZ" \
+  --checksum-url "file://$CHECKSUM_FILE" \
+  --app-dir "$SMOKE_DIR/app" \
+  --no-bin-link \
+  > "$SMOKE_DIR/invalid-current.log" 2>&1; then
+  die "Installer replaced a non-symlink current directory"
+fi
+grep -Fq "Current release path is not a symlink" "$SMOKE_DIR/invalid-current.log" \
+  || die "Installer did not report the unsafe current path cleanly"
+[ -d "$SMOKE_DIR/app/current" ] && [ ! -L "$SMOKE_DIR/app/current" ] \
+  || die "Installer changed the non-symlink current directory"
+[ ! -d "$SMOKE_DIR/app/.install-lock" ] || die "Installer left its lock after a failed update"
 
 echo "Smoke-tested install script"
 echo "  Archive: $TAR_GZ"

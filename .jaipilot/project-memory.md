@@ -49,6 +49,8 @@ Update this file when any of these change:
 - Codex is expected to determine the final test file path and class name from repository conventions.
 - Codex is expected to own the test-run, fix, and coverage loop during generation.
 - The interactive shell stores history at `~/.jaipilot/history`.
+- Installed interactive shells check for a newer stable GitHub release at startup and offer update-now or skip; source builds and non-interactive commands do not check.
+- Self-updates install a new versioned payload through the bundled installer while preserving any custom external bin launcher.
 - The CLI UX favors structured sections, tables, coverage meters, cleaned Codex diagnostics, and spinners over raw tool logs or JSON.
 - Coverage discovery currently looks for JaCoCo XML reports under:
   - `target/site/jacoco/jacoco.xml`

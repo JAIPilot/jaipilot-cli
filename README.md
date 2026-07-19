@@ -30,6 +30,7 @@ JAIPilot does not require a globally installed Maven or Gradle at runtime. Codex
 - JaCoCo-based status reporting with a default threshold of `80%`
 - Before/after coverage summaries for each run
 - Per-class and total agent token usage
+- Interactive startup checks that offer to install a newer JAIPilot release or skip it
 - Friendly CLI errors instead of raw stack traces
 
 ## Prerequisites
@@ -53,6 +54,8 @@ Then verify:
 ```bash
 jaipilot --version
 ```
+
+When an installed JAIPilot opens its interactive shell, it checks the latest stable GitHub release with a short timeout. If a newer version exists, choose `y` to update now or press Enter to skip. Source builds, non-interactive commands, and failed network checks continue without a prompt. Self-updates preserve custom external launcher locations created with `--bin-dir` or `--prefix`.
 
 ## SonarQube Analysis
 
