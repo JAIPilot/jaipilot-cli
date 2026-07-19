@@ -17,6 +17,10 @@
 
 `jaipilot-cli` is a Java-only local workflow. It does not call any custom backend or hosted service. Test generation comes from the coding agent you already use, starting with `codex`.
 
+## Watch the Demo
+
+[Watch how JAIPilot quickly generates 80%+ Java unit test coverage on YouTube](https://youtu.be/uDuR7RATXr4).
+
 JAIPilot prefers a repository's Maven or Gradle wrapper and falls back to a globally installed build tool. Coverage-sensitive commands run the clean full suite directly so target selection and status output come from a known-fresh JaCoCo report rather than whichever focused test happened to run last.
 
 ## Features
