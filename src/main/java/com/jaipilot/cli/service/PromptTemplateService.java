@@ -1,6 +1,7 @@
 package com.jaipilot.cli.service;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -8,15 +9,18 @@ public final class PromptTemplateService {
 
     private static final String INITIAL_TEMPLATE_PATH = "prompts/generate-java-tests.md";
     private static final String PREPARATION_TEMPLATE_PATH = "prompts/prepare-java-project.md";
+    private static final String BATCH_VALIDATION_TEMPLATE_PATH = "prompts/validate-java-test-batch.md";
 
     private final ProjectFileService fileService;
     private final String initialTemplate;
     private final String preparationTemplate;
+    private final String batchValidationTemplate;
 
     public PromptTemplateService(ProjectFileService fileService) {
         this.fileService = Objects.requireNonNull(fileService, "fileService");
         this.initialTemplate = fileService.readResource(INITIAL_TEMPLATE_PATH);
         this.preparationTemplate = fileService.readResource(PREPARATION_TEMPLATE_PATH);
+        this.batchValidationTemplate = fileService.readResource(BATCH_VALIDATION_TEMPLATE_PATH);
     }
 
     public String buildInitialPrompt(JavaProjectService.JavaClassDescriptor descriptor) {
@@ -33,6 +37,21 @@ public final class PromptTemplateService {
         Map<String, String> values = new LinkedHashMap<>();
         putIfReferenced(preparationTemplate, values, "PROJECT_ROOT", projectRoot.toString());
         return render(preparationTemplate, values);
+    }
+
+    public String buildBatchValidationPrompt(java.nio.file.Path projectRoot, List<java.nio.file.Path> generatedTests) {
+        Map<String, String> values = new LinkedHashMap<>();
+        putIfReferenced(batchValidationTemplate, values, "PROJECT_ROOT", projectRoot.toString());
+        putIfReferenced(
+                batchValidationTemplate,
+                values,
+                "GENERATED_TEST_PATHS",
+                generatedTests.stream()
+                        .map(path -> "- " + path)
+                        .reduce((left, right) -> left + System.lineSeparator() + right)
+                        .orElse("- None")
+        );
+        return render(batchValidationTemplate, values);
     }
 
     private void putIfReferenced(Map<String, String> values, String key, String value) {

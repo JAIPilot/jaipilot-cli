@@ -160,7 +160,7 @@ public final class InteractiveShell {
         }
     }
 
-    private String[] translate(String input) {
+    String[] translate(String input) {
         if (!input.startsWith("/")) {
             return new String[0];
         }
@@ -183,29 +183,49 @@ public final class InteractiveShell {
         }
 
         if (tokens.length >= 3 && "generate".equals(tokens[0]) && "all".equals(tokens[1]) && "changed".equals(tokens[2])) {
-            return new String[] {"generate", "--changed"};
+            return translateGenerateMode(tokens, 3, "--changed", null);
         }
         if (tokens.length >= 3 && "generate".equals(tokens[0]) && "all".equals(tokens[1]) && "uncommitted".equals(tokens[2])) {
-            return new String[] {"generate", "--changed"};
+            return translateGenerateMode(tokens, 3, "--changed", null);
         }
         if (tokens.length >= 4 && "generate".equals(tokens[0]) && "all".equals(tokens[1]) && "for".equals(tokens[2])
                 && "uncommitted".equals(tokens[3])) {
-            return new String[] {"generate", "--changed"};
+            return translateGenerateMode(tokens, 4, "--changed", null);
         }
-        if (tokens.length >= 4 && "generate".equals(tokens[0]) && "all".equals(tokens[1]) && "coverage".equals(tokens[2])) {
-            return new String[] {"generate", "--coverage-below", stripPercent(tokens[3])};
-        }
-        if (tokens.length == 3 && "generate".equals(tokens[0]) && "all".equals(tokens[1]) && "coverage".equals(tokens[2])) {
-            return new String[] {"generate", "--coverage-below", String.valueOf(com.jaipilot.cli.commands.StatusCommand.DEFAULT_COVERAGE_THRESHOLD)};
+        if (tokens.length >= 3 && "generate".equals(tokens[0]) && "all".equals(tokens[1]) && "coverage".equals(tokens[2])) {
+            int trailingStart = 3;
+            String threshold = String.valueOf(com.jaipilot.cli.commands.StatusCommand.DEFAULT_COVERAGE_THRESHOLD);
+            if (tokens.length > 3 && !tokens[3].startsWith("-")) {
+                threshold = stripPercent(tokens[3]);
+                trailingStart = 4;
+            }
+            return translateGenerateMode(tokens, trailingStart, "--coverage-below", threshold);
         }
         if (tokens.length >= 5 && "generate".equals(tokens[0]) && "all".equals(tokens[1]) && "for".equals(tokens[2])
                 && "coverage".equals(tokens[4])) {
-            return new String[] {"generate", "--coverage-below", stripPercent(tokens[3])};
+            return translateGenerateMode(tokens, 5, "--coverage-below", stripPercent(tokens[3]));
         }
         if (tokens.length >= 1 && "generate".equals(tokens[0])) {
             return Arrays.copyOf(tokens, tokens.length);
         }
         return new String[0];
+    }
+
+    private String[] translateGenerateMode(
+            String[] tokens,
+            int trailingStart,
+            String option,
+            String optionValue
+    ) {
+        int prefixLength = optionValue == null ? 2 : 3;
+        String[] translated = new String[prefixLength + tokens.length - trailingStart];
+        translated[0] = "generate";
+        translated[1] = option;
+        if (optionValue != null) {
+            translated[2] = optionValue;
+        }
+        System.arraycopy(tokens, trailingStart, translated, prefixLength, tokens.length - trailingStart);
+        return translated;
     }
 
     private String[] tokenize(String value) {

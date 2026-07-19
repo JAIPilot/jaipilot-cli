@@ -8,12 +8,18 @@ import com.jaipilot.cli.ui.TerminalUi;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletionService;
 import java.util.concurrent.ExecutionException;
@@ -113,9 +119,6 @@ public final class GenerateCommand implements Callable<Integer> {
         }
         validateTargetMode();
 
-        CoverageReportService.CoverageSnapshot startingSnapshot = coverageReportService.readProjectSnapshot(projectRoot)
-                .orElse(null);
-
         ui.printBanner("Generating Java tests locally with Codex");
         LinkedHashMap<String, String> metadata = new LinkedHashMap<>();
         metadata.put("project", projectRoot.toString());
@@ -157,11 +160,17 @@ public final class GenerateCommand implements Callable<Integer> {
                 ? runParallelGeneration(projectRoot, targets, baselineSnapshot, model, ui, errUi, out)
                 : runSequentialGeneration(targets, baselineSnapshot, model, ui, errUi, out);
 
-        CodexCliUnitTestGenerator.AgentUsage totalUsage = preparationUsage.plus(runSummary.totalUsage());
+        ValidationResult validationResult = validateBatchIfRequired(projectRoot, runSummary, ui, errUi, out);
+        CodexCliUnitTestGenerator.AgentUsage totalUsage = preparationUsage
+                .plus(runSummary.totalUsage())
+                .plus(validationResult.usage());
         ui.section("Run Summary");
         LinkedHashMap<String, String> summary = new LinkedHashMap<>();
         summary.put("successful classes", String.valueOf(runSummary.successCount()));
         summary.put("failed classes", String.valueOf(runSummary.failureCount()));
+        if (requiresPreparation()) {
+            summary.put("final validation", validationResult.succeeded() ? "passed" : "failed");
+        }
         summary.put(
                 "total tokens",
                 "input=%d cached=%d output=%d reasoning=%d total=%d".formatted(
@@ -182,10 +191,12 @@ public final class GenerateCommand implements Callable<Integer> {
         if (requiresPreparation()) {
             CoverageReportService.CoverageSnapshot finalSnapshot = coverageReportService.readProjectSnapshot(projectRoot)
                     .orElse(null);
-            printCoverageSummary(ui, startingSnapshot != null ? startingSnapshot : baselineSnapshot, finalSnapshot);
+            printCoverageSummary(ui, baselineSnapshot, finalSnapshot);
             printRemainingThresholdFailures(ui, projectRoot, finalSnapshot);
         }
-        return runSummary.failureCount() == 0 ? CommandLine.ExitCode.OK : CommandLine.ExitCode.SOFTWARE;
+        return runSummary.failureCount() == 0 && validationResult.succeeded()
+                ? CommandLine.ExitCode.OK
+                : CommandLine.ExitCode.SOFTWARE;
     }
 
     private void validateTargetMode() {
@@ -241,6 +252,47 @@ public final class GenerateCommand implements Callable<Integer> {
         ui.blankLine();
         return preparationUsage;
     }
+
+    private ValidationResult validateBatchIfRequired(
+            Path projectRoot,
+            RunSummary runSummary,
+            TerminalUi ui,
+            TerminalUi errUi,
+            PrintWriter out
+    ) {
+        if (!requiresPreparation() || runSummary.successCount() == 0) {
+            return new ValidationResult(CodexCliUnitTestGenerator.AgentUsage.zero(), !requiresPreparation());
+        }
+
+        ui.section("Final Validation");
+        try {
+            CodexCliUnitTestGenerator.AgentUsage usage = generator.validateBatch(
+                    projectRoot,
+                    model,
+                    ui,
+                    showLogs,
+                    out,
+                    runSummary.generatedTests()
+            );
+            ui.success("Clean full-suite validation passed and refreshed JaCoCo coverage.");
+            ui.info(
+                    "Validation tokens: input=%d cached=%d output=%d reasoning=%d total=%d".formatted(
+                            usage.inputTokens(),
+                            usage.cachedInputTokens(),
+                            usage.outputTokens(),
+                            usage.reasoningOutputTokens(),
+                            usage.totalTokens()
+                    )
+            );
+            ui.blankLine();
+            return new ValidationResult(usage, true);
+        } catch (Exception exception) {
+            errUi.error("Final merged-test validation failed: " + exception.getMessage());
+            ui.blankLine();
+            return new ValidationResult(CodexCliUnitTestGenerator.AgentUsage.zero(), false);
+        }
+    }
+
     private RunSummary runSequentialGeneration(
             List<JavaProjectService.JavaClassDescriptor> targets,
             CoverageReportService.CoverageSnapshot baselineSnapshot,
@@ -253,6 +305,7 @@ public final class GenerateCommand implements Callable<Integer> {
         int failureCount = 0;
         CodexCliUnitTestGenerator.AgentUsage totalUsage = CodexCliUnitTestGenerator.AgentUsage.zero();
         List<String> failedClasses = new ArrayList<>();
+        List<Path> generatedTests = new ArrayList<>();
 
         for (int index = 0; index < targets.size(); index++) {
             JavaProjectService.JavaClassDescriptor descriptor = targets.get(index);
@@ -271,6 +324,7 @@ public final class GenerateCommand implements Callable<Integer> {
                 );
                 printClassResult(out, ui, normalizeResult(result.outputPath(), result, baselineClassCoverage));
                 totalUsage = totalUsage.plus(result.usage());
+                generatedTests.addAll(result.touchedTestPaths());
                 successCount++;
             } catch (Exception exception) {
                 errUi.error("Failed for " + descriptor.fullyQualifiedName() + ": " + exception.getMessage());
@@ -279,7 +333,13 @@ public final class GenerateCommand implements Callable<Integer> {
             }
             ui.blankLine();
         }
-        return new RunSummary(successCount, failureCount, totalUsage, List.copyOf(failedClasses));
+        return new RunSummary(
+                successCount,
+                failureCount,
+                totalUsage,
+                List.copyOf(failedClasses),
+                List.copyOf(generatedTests)
+        );
     }
 
     private RunSummary runParallelGeneration(
@@ -303,26 +363,43 @@ public final class GenerateCommand implements Callable<Integer> {
 
         ExecutorService executor = Executors.newFixedThreadPool(parallelism);
         CompletionService<GenerationOutcome> completionService = new ExecutorCompletionService<>(executor);
+        Map<Path, ProjectFileService.FileFingerprint> batchTestBaseline = fileService.snapshotJavaTestFiles(projectRoot);
         try {
             for (JavaProjectService.JavaClassDescriptor descriptor : targets) {
                 completionService.submit(() -> generateInSandbox(batchRoot, projectRoot, descriptor, model, ui, out));
             }
 
+            List<GenerationOutcome> outcomes = new ArrayList<>();
+            for (int index = 0; index < targets.size(); index++) {
+                outcomes.add(takeCompletedOutcome(completionService));
+            }
+            outcomes.sort(Comparator
+                    .comparing((GenerationOutcome outcome) -> outcome.descriptor().fullyQualifiedName())
+                    .thenComparing(outcome -> targetIdentity(projectRoot, outcome.descriptor())));
+
+            Map<String, Map<Path, String>> outputsByClass = new TreeMap<>();
+            for (GenerationOutcome outcome : outcomes) {
+                if (outcome.success()) {
+                    outputsByClass.put(targetIdentity(projectRoot, outcome.descriptor()), outcome.generatedTestContents());
+                }
+            }
+            Map<String, List<Path>> conflictsByClass = findOutputConflicts(outputsByClass);
+            Map<Path, String> mergeContents = collectMergeContents(outputsByClass, conflictsByClass.keySet());
+            fileService.writeFilesTransactionally(mergeContents, batchTestBaseline);
+
             int successCount = 0;
             int failureCount = 0;
-            int completedCount = 0;
             CodexCliUnitTestGenerator.AgentUsage totalUsage = CodexCliUnitTestGenerator.AgentUsage.zero();
             List<String> failedClasses = new ArrayList<>();
-
-            for (int index = 0; index < targets.size(); index++) {
-                GenerationOutcome outcome = takeCompletedOutcome(completionService);
-                completedCount++;
+            List<Path> generatedTests = new ArrayList<>();
+            for (int index = 0; index < outcomes.size(); index++) {
+                GenerationOutcome outcome = outcomes.get(index);
                 CoverageReportService.ClassCoverage baselineClassCoverage = baselineSnapshot == null
                         ? null
                         : baselineSnapshot.classCoverage(outcome.descriptor().fullyQualifiedName()).orElse(null);
-                printClassContext(out, ui, outcome.descriptor(), baselineClassCoverage, completedCount, targets.size());
-                if (outcome.success()) {
-                    fileService.writeFile(outcome.result().outputPath(), outcome.generatedTestContent());
+                printClassContext(out, ui, outcome.descriptor(), baselineClassCoverage, index + 1, targets.size());
+                String targetIdentity = targetIdentity(projectRoot, outcome.descriptor());
+                if (outcome.success() && !conflictsByClass.containsKey(targetIdentity)) {
                     CodexCliUnitTestGenerator.GenerationResult mergedResult = normalizeResult(
                             outcome.result().outputPath(),
                             outcome.result(),
@@ -330,18 +407,44 @@ public final class GenerateCommand implements Callable<Integer> {
                     );
                     printClassResult(out, ui, mergedResult);
                     totalUsage = totalUsage.plus(mergedResult.usage());
+                    generatedTests.addAll(mergedResult.touchedTestPaths());
                     successCount++;
                 } else {
-                    errUi.error("Failed for " + outcome.descriptor().fullyQualifiedName() + ": " + outcome.failureMessage());
+                    String failureMessage = outcome.failureMessage();
+                    if (conflictsByClass.containsKey(targetIdentity)) {
+                        failureMessage = "Conflicting parallel edits for " + conflictsByClass
+                                .get(targetIdentity).stream()
+                                .map(Path::toString)
+                                .toList();
+                        totalUsage = totalUsage.plus(outcome.result().usage());
+                    }
+                    errUi.error("Failed for " + outcome.descriptor().fullyQualifiedName() + ": " + failureMessage);
                     failedClasses.add(outcome.descriptor().fullyQualifiedName());
                     failureCount++;
                 }
                 ui.blankLine();
             }
 
-            return new RunSummary(successCount, failureCount, totalUsage, List.copyOf(failedClasses));
+            return new RunSummary(
+                    successCount,
+                    failureCount,
+                    totalUsage,
+                    List.copyOf(failedClasses),
+                    List.copyOf(generatedTests)
+            );
         } finally {
             executor.shutdownNow();
+            boolean terminated;
+            try {
+                terminated = executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted while stopping parallel generation workers.", exception);
+            }
+            if (!terminated) {
+                throw new IllegalStateException("Parallel generation workers did not stop; preserved workspace at "
+                        + batchRoot);
+            }
             fileService.deleteRecursively(batchRoot);
         }
     }
@@ -354,7 +457,9 @@ public final class GenerateCommand implements Callable<Integer> {
             TerminalUi ui,
             PrintWriter sharedWriter
     ) {
-        Path sandboxRoot = batchRoot.resolve(sanitizeFileName(descriptor.className()) + "-" + Integer.toUnsignedString(descriptor.fullyQualifiedName().hashCode(), 36));
+        String targetIdentity = targetIdentity(projectRoot, descriptor);
+        Path sandboxRoot = batchRoot.resolve(sanitizeFileName(descriptor.className()) + "-"
+                + UUID.nameUUIDFromBytes(targetIdentity.getBytes(StandardCharsets.UTF_8)));
         PrintWriter workerWriter = sharedWriter;
         try {
             fileService.copyProjectWorkspace(projectRoot, sandboxRoot);
@@ -378,11 +483,16 @@ public final class GenerateCommand implements Callable<Integer> {
                     false,
                     workerWriter
             );
-            Path projectOutputPath = projectRoot.resolve(sandboxRoot.relativize(result.outputPath())).normalize();
+            Map<Path, String> generatedTestContents = new LinkedHashMap<>();
+            for (Path touchedTestPath : result.touchedTestPaths()) {
+                Path projectTestPath = rebaseSandboxPath(projectRoot, sandboxRoot, touchedTestPath);
+                generatedTestContents.put(projectTestPath, fileService.readFile(touchedTestPath));
+            }
+            Path projectOutputPath = rebaseSandboxPath(projectRoot, sandboxRoot, result.outputPath());
             return GenerationOutcome.success(
                     descriptor,
-                    rebaseOutputPath(projectOutputPath, result),
-                    fileService.readFile(result.outputPath())
+                    rebaseOutputPaths(projectRoot, sandboxRoot, projectOutputPath, result),
+                    Map.copyOf(generatedTestContents)
             );
         } catch (Exception exception) {
             String message = exception.getMessage() == null || exception.getMessage().isBlank()
@@ -395,6 +505,55 @@ public final class GenerateCommand implements Callable<Integer> {
             }
             fileService.deleteRecursively(sandboxRoot);
         }
+    }
+
+    private Path rebaseSandboxPath(Path projectRoot, Path sandboxRoot, Path sandboxPath) {
+        Path normalizedSandboxRoot = sandboxRoot.toAbsolutePath().normalize();
+        Path normalizedSandboxPath = sandboxPath.toAbsolutePath().normalize();
+        if (!normalizedSandboxPath.startsWith(normalizedSandboxRoot)) {
+            throw new IllegalStateException("Generated test escaped its isolated workspace: " + sandboxPath);
+        }
+        return projectRoot.resolve(normalizedSandboxRoot.relativize(normalizedSandboxPath)).normalize();
+    }
+
+    static Map<Path, String> collectMergeContents(
+            Map<String, Map<Path, String>> outputsByClass,
+            Set<String> conflictedClasses
+    ) {
+        Map<Path, String> mergedContents = new TreeMap<>();
+        outputsByClass.forEach((className, outputs) -> {
+            if (!conflictedClasses.contains(className)) {
+                mergedContents.putAll(outputs);
+            }
+        });
+        return new LinkedHashMap<>(mergedContents);
+    }
+
+    static Map<String, List<Path>> findOutputConflicts(Map<String, Map<Path, String>> outputsByClass) {
+        Map<Path, Map<String, Set<String>>> classesByPathAndContent = new TreeMap<>();
+        outputsByClass.forEach((className, outputs) -> outputs.forEach((path, content) -> classesByPathAndContent
+                .computeIfAbsent(path.normalize(), ignored -> new LinkedHashMap<>())
+                .computeIfAbsent(content, ignored -> new LinkedHashSet<>())
+                .add(className)));
+
+        Map<String, List<Path>> conflictsByClass = new TreeMap<>();
+        classesByPathAndContent.forEach((path, classesByContent) -> {
+            if (classesByContent.size() <= 1) {
+                return;
+            }
+            classesByContent.values().stream()
+                    .flatMap(Set::stream)
+                    .distinct()
+                    .sorted()
+                    .forEach(className -> conflictsByClass
+                            .computeIfAbsent(className, ignored -> new ArrayList<>())
+                            .add(path));
+        });
+        return conflictsByClass.entrySet().stream().collect(
+                LinkedHashMap::new,
+                (result, entry) -> result.put(entry.getKey(), List.copyOf(entry.getValue())),
+                Map::putAll
+        );
     }
 
     private GenerationOutcome takeCompletedOutcome(CompletionService<GenerationOutcome> completionService) {
@@ -511,6 +670,7 @@ public final class GenerateCommand implements Callable<Integer> {
         if (!result.coverageDelta().available()) {
             return new CodexCliUnitTestGenerator.GenerationResult(
                     outputPath,
+                    result.touchedTestPaths(),
                     result.usage(),
                     result.coverageDelta(),
                     result.testExistedBefore(),
@@ -519,6 +679,7 @@ public final class GenerateCommand implements Callable<Integer> {
         }
         return new CodexCliUnitTestGenerator.GenerationResult(
                 outputPath,
+                result.touchedTestPaths(),
                 result.usage(),
                 new CodexCliUnitTestGenerator.CoverageDelta(
                         baselineClassCoverage,
@@ -530,12 +691,17 @@ public final class GenerateCommand implements Callable<Integer> {
         );
     }
 
-    private CodexCliUnitTestGenerator.GenerationResult rebaseOutputPath(
+    private CodexCliUnitTestGenerator.GenerationResult rebaseOutputPaths(
+            Path projectRoot,
+            Path sandboxRoot,
             Path outputPath,
             CodexCliUnitTestGenerator.GenerationResult result
     ) {
         return new CodexCliUnitTestGenerator.GenerationResult(
                 outputPath,
+                result.touchedTestPaths().stream()
+                        .map(path -> rebaseSandboxPath(projectRoot, sandboxRoot, path))
+                        .toList(),
                 result.usage(),
                 result.coverageDelta(),
                 result.testExistedBefore(),
@@ -651,6 +817,16 @@ public final class GenerateCommand implements Callable<Integer> {
         return path.toString().replace('\\', '/');
     }
 
+    static String targetIdentity(
+            Path projectRoot,
+            JavaProjectService.JavaClassDescriptor descriptor
+    ) {
+        return projectRoot.toAbsolutePath().normalize()
+                .relativize(descriptor.cutPath().toAbsolutePath().normalize())
+                .toString()
+                .replace('\\', '/');
+    }
+
     private String sanitizeFileName(String value) {
         return value.replaceAll("[^A-Za-z0-9._-]", "_");
     }
@@ -659,22 +835,29 @@ public final class GenerateCommand implements Callable<Integer> {
             int successCount,
             int failureCount,
             CodexCliUnitTestGenerator.AgentUsage totalUsage,
-            List<String> failedClasses
+            List<String> failedClasses,
+            List<Path> generatedTests
+    ) {
+    }
+
+    private record ValidationResult(
+            CodexCliUnitTestGenerator.AgentUsage usage,
+            boolean succeeded
     ) {
     }
 
     private record GenerationOutcome(
             JavaProjectService.JavaClassDescriptor descriptor,
             CodexCliUnitTestGenerator.GenerationResult result,
-            String generatedTestContent,
+            Map<Path, String> generatedTestContents,
             String failureMessage
     ) {
         static GenerationOutcome success(
                 JavaProjectService.JavaClassDescriptor descriptor,
                 CodexCliUnitTestGenerator.GenerationResult result,
-                String generatedTestContent
+                Map<Path, String> generatedTestContents
         ) {
-            return new GenerationOutcome(descriptor, result, generatedTestContent, null);
+            return new GenerationOutcome(descriptor, result, generatedTestContents, null);
         }
 
         static GenerationOutcome failure(

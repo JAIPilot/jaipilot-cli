@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -51,6 +52,30 @@ class CoverageReportServiceTest {
     }
 
     @Test
+    void readProjectSnapshotTreatsClassWithoutLineCounterAsNonCoverable() throws Exception {
+        Path projectRoot = tempDir.resolve("sample-interface");
+        Path reportPath = projectRoot.resolve("target/site/jacoco/jacoco.xml");
+        Files.createDirectories(reportPath.getParent());
+        Files.writeString(reportPath, """
+                <report name="sample">
+                  <package name="com/example">
+                    <class name="com/example/RepositoryContract">
+                      <counter type="METHOD" missed="0" covered="0"/>
+                    </class>
+                  </package>
+                </report>
+                """);
+
+        CoverageReportService.ClassCoverage coverage = coverageReportService.readProjectSnapshot(projectRoot)
+                .orElseThrow()
+                .classCoverage("com.example.RepositoryContract")
+                .orElseThrow();
+
+        assertEquals(100.0d, coverage.lineCoverage(), 0.0001d);
+        assertEquals(0.0d, coverage.branchCoverage(), 0.0001d);
+    }
+
+    @Test
     void readProjectSnapshotFindsCustomMavenCoverageReportsDirectory() throws Exception {
         Path projectRoot = tempDir.resolve("sample-custom");
         Path reportPath = projectRoot.resolve("target/coverage-reports/jacoco-ut/jacoco.xml");
@@ -74,5 +99,18 @@ class CoverageReportServiceTest {
 
         assertEquals(reportPath, snapshot.reportPath());
         assertEquals(100.0d, snapshot.classCoverage("com.example.OrderService").orElseThrow().lineCoverage(), 0.0001d);
+    }
+
+    @Test
+    void findCoverageReportsReturnsEveryKnownReportLocation() throws Exception {
+        Path projectRoot = tempDir.resolve("multiple-reports");
+        Path first = projectRoot.resolve("target/site/jacoco/jacoco.xml");
+        Path second = projectRoot.resolve("module/target/site/jacoco-it/jacoco.xml");
+        Files.createDirectories(first.getParent());
+        Files.createDirectories(second.getParent());
+        Files.writeString(first, "<report/>");
+        Files.writeString(second, "<report/>");
+
+        assertEquals(List.of(first, second), coverageReportService.findCoverageReports(projectRoot));
     }
 }

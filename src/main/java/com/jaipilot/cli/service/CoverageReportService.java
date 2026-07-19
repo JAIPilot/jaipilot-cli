@@ -21,6 +21,10 @@ import org.xml.sax.InputSource;
 public final class CoverageReportService {
 
     public Optional<Path> findCoverageReport(Path projectRoot) {
+        return findCoverageReports(projectRoot).stream().findFirst();
+    }
+
+    public List<Path> findCoverageReports(Path projectRoot) {
         List<Path> matches = new ArrayList<>();
         try (var paths = Files.walk(projectRoot)) {
             paths.filter(Files::isRegularFile)
@@ -32,7 +36,7 @@ public final class CoverageReportService {
         }
         return matches.stream()
                 .sorted(Comparator.comparingInt(path -> projectRoot.relativize(path).getNameCount()))
-                .findFirst();
+                .toList();
     }
 
     public Optional<CoverageSnapshot> readProjectSnapshot(Path projectRoot) {
@@ -45,7 +49,7 @@ public final class CoverageReportService {
         for (Element packageElement : childElements(document.getDocumentElement(), "package")) {
             for (Element classElement : childElements(packageElement, "class")) {
                 String fullyQualifiedName = classElement.getAttribute("name").replace('/', '.');
-                double lineCoverage = readCoverage(classElement, "LINE");
+                double lineCoverage = readCoverage(classElement, "LINE", 100.0d);
                 double branchCoverage = readCoverage(classElement, "BRANCH");
                 coverageByClass.put(fullyQualifiedName, new ClassCoverage(fullyQualifiedName, lineCoverage, branchCoverage));
             }
@@ -76,6 +80,10 @@ public final class CoverageReportService {
     }
 
     private double readCoverage(Element parent, String counterType) {
+        return readCoverage(parent, counterType, 0.0d);
+    }
+
+    private double readCoverage(Element parent, String counterType, double missingCoverage) {
         for (Element counterElement : childElements(parent, "counter")) {
             if (!counterType.equals(counterElement.getAttribute("type"))) {
                 continue;
@@ -88,7 +96,7 @@ public final class CoverageReportService {
             }
             return (covered / total) * 100.0d;
         }
-        return 0.0d;
+        return missingCoverage;
     }
 
     private List<Element> childElements(Element parent, String tagName) {

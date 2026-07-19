@@ -10,10 +10,14 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.function.Predicate;
 
 public final class ProjectFileService {
 
@@ -77,14 +81,106 @@ public final class ProjectFileService {
         }
     }
 
+    public void writeFilesTransactionally(
+            Map<Path, String> contentsByPath,
+            Map<Path, FileFingerprint> expectedFingerprints
+    ) {
+        List<Path> paths = contentsByPath.keySet().stream().sorted().toList();
+        Map<Path, Path> stagedFiles = new LinkedHashMap<>();
+        Map<Path, byte[]> originalContents = new LinkedHashMap<>();
+        List<Path> movedPaths = new ArrayList<>();
+        try {
+            verifyFingerprints(paths, expectedFingerprints);
+            for (Path path : paths) {
+                Path parent = path.getParent();
+                if (parent == null) {
+                    throw new IOException("Cannot stage a file without a parent directory: " + path);
+                }
+                Files.createDirectories(parent);
+                if (Files.isRegularFile(path)) {
+                    originalContents.put(path, Files.readAllBytes(path));
+                }
+                Path staged = Files.createTempFile(parent, ".jaipilot-", ".tmp");
+                Files.writeString(staged, contentsByPath.get(path), StandardCharsets.UTF_8);
+                stagedFiles.put(path, staged);
+            }
+            verifyFingerprints(paths, expectedFingerprints);
+            for (Path path : paths) {
+                moveReplacing(stagedFiles.get(path), path);
+                movedPaths.add(path);
+            }
+        } catch (Exception exception) {
+            rollbackFiles(movedPaths, originalContents);
+            throw new IllegalStateException("Failed to merge generated tests transactionally.", exception);
+        } finally {
+            stagedFiles.values().forEach(staged -> {
+                try {
+                    Files.deleteIfExists(staged);
+                } catch (IOException ignored) {
+                    // Best-effort cleanup for a failed transaction.
+                }
+            });
+        }
+    }
+
+    private void verifyFingerprints(List<Path> paths, Map<Path, FileFingerprint> expectedFingerprints) {
+        List<Path> drifted = paths.stream().filter(path -> {
+            FileFingerprint current = Files.isRegularFile(path) ? fingerprint(path) : null;
+            return !Objects.equals(expectedFingerprints.get(path), current);
+        }).toList();
+        if (!drifted.isEmpty()) {
+            throw new IllegalStateException("Test files changed while batch generation was running: " + drifted);
+        }
+    }
+
+    private void rollbackFiles(List<Path> movedPaths, Map<Path, byte[]> originalContents) {
+        List<Path> reverseOrder = new ArrayList<>(movedPaths);
+        reverseOrder.sort(Comparator.reverseOrder());
+        for (Path path : reverseOrder) {
+            try {
+                byte[] original = originalContents.get(path);
+                if (original == null) {
+                    Files.deleteIfExists(path);
+                    continue;
+                }
+                Path staged = Files.createTempFile(path.getParent(), ".jaipilot-rollback-", ".tmp");
+                Files.write(staged, original);
+                moveReplacing(staged, path);
+            } catch (Exception ignored) {
+                // Preserve the original merge exception; rollback is best effort.
+            }
+        }
+    }
+
+    private void moveReplacing(Path source, Path destination) throws IOException {
+        try {
+            Files.move(
+                    source,
+                    destination,
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING
+            );
+        } catch (java.nio.file.AtomicMoveNotSupportedException exception) {
+            Files.move(source, destination, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
     public Map<Path, FileFingerprint> snapshotJavaTestFiles(Path root) {
+        return snapshotFiles(root, this::isJavaTestPath);
+    }
+
+    public Map<Path, FileFingerprint> snapshotJavaSourceFiles(Path root) {
+        return snapshotFiles(root, this::isJavaSourcePath);
+    }
+
+    private Map<Path, FileFingerprint> snapshotFiles(Path root, Predicate<Path> pathFilter) {
         Map<Path, FileFingerprint> snapshot = new LinkedHashMap<>();
         try (var paths = Files.walk(root)) {
             paths.filter(Files::isRegularFile)
-                    .filter(this::isJavaTestPath)
+                    .filter(pathFilter)
                     .forEach(path -> snapshot.put(path.normalize(), fingerprint(path)));
         } catch (IOException exception) {
-            throw new IllegalStateException("Failed to scan Java test files under " + root, exception);
+            throw new IllegalStateException("Failed to scan files under " + root, exception);
         }
         return snapshot;
     }
@@ -188,6 +284,12 @@ public final class ProjectFileService {
     private boolean isJavaTestPath(Path path) {
         String normalized = path.toString().replace('\\', '/');
         return normalized.endsWith(".java") && normalized.contains("/src/test/java/");
+    }
+
+    private boolean isJavaSourcePath(Path path) {
+        String normalized = path.toString().replace('\\', '/');
+        return normalized.endsWith(".java")
+                && (normalized.contains("/src/main/java/") || normalized.contains("/src/test/java/"));
     }
 
     private FileFingerprint fingerprint(Path path) {

@@ -226,7 +226,8 @@ public final class JavaProjectService {
         String normalized = normalize(path);
         return normalized.endsWith(".java")
                 && normalized.contains("/src/main/java/")
-                && !normalized.contains("/src/test/");
+                && !normalized.contains("/src/test/")
+                && !"package-info.java".equals(path.getFileName().toString());
     }
 
     private boolean looksLikePath(String selector) {

@@ -24,8 +24,8 @@ JAIPilot does not require a globally installed Maven or Gradle at runtime. Codex
 - JLine-powered interactive shell with command history, visible Tab completion menus, and inline history suggestions
 - Rich ANSI output with sections, tables, coverage meters, and live phase spinners
 - Java class targeting by path, fully qualified name, or simple unique class name
-- Isolated parallel batch generation for uncommitted classes
-- Isolated parallel batch generation for classes below a coverage threshold
+- Isolated parallel batch generation with deterministic, collision-safe test merging
+- Allowlisted, isolated repair plus clean full-suite validation and fresh JaCoCo coverage after batch generation
 - Codex-driven project preparation for batch modes where build, test, and coverage readiness affects target selection
 - JaCoCo-based status reporting with a default threshold of `80%`
 - Before/after coverage summaries for each run
@@ -145,13 +145,14 @@ Each generation run prints:
 - for batch modes, a preparation phase where Codex validates build, test, and coverage readiness before target-class generation begins
 - a queue table showing target classes, coverage, and current test state
 - live progress for Codex generation
-- optional streamed process logs with `--show-logs`, including readable Codex event logs instead of raw JSON
+- optional streamed process logs with `--show-logs`, including readable Codex events, shell failures, and cleaned diagnostics instead of raw JSON
 - isolated parallel workers for batch modes, with per-class log prefixes so concurrent output stays readable
+- deterministic merging of every Java test touched by a worker; divergent edits to the same path fail instead of overwriting each other
 - the generated or updated test path
 - per-class token usage
 - per-class JaCoCo coverage deltas when a refreshed report is available after the Codex run
 - a final run summary with total usage
-- for batch modes, the currently available whole-project coverage report and remaining below-threshold classes
+- for batch modes, isolated allowlisted repair, a clean final full-suite validation, refreshed whole-project coverage, and remaining below-threshold classes
 
 ## Codex Memory Files
 
@@ -170,6 +171,7 @@ The bundled Codex prompt templates now live in:
 
 - `src/main/resources/prompts/prepare-java-project.md`
 - `src/main/resources/prompts/generate-java-tests.md`
+- `src/main/resources/prompts/validate-java-test-batch.md`
 
 JAIPilot fills those templates with project or source-class context at runtime.
 
@@ -181,7 +183,9 @@ JAIPilot fills those templates with project or source-class context at runtime.
 4. For batch modes, it copies the prepared project into isolated temporary sandboxes so multiple Codex runs can proceed in parallel without sharing build output or coverage state.
 5. It asks `codex` to create or update the appropriate JUnit test based on the repository's own conventions.
 6. Codex is responsible for running focused tests, fixing generated-test failures, and refreshing coverage when practical.
-7. JAIPilot reads the resulting test files and target-class coverage after the run. Batch modes also print repository-level coverage summaries.
+7. JAIPilot merges every touched Java test deterministically and rejects divergent same-path edits from parallel workers.
+8. Batch modes let Codex repair only the generated tests in a disposable workspace, merge those allowlisted repairs transactionally, then run the clean build directly in the real project.
+9. JAIPilot verifies that every touched generated test executed, requires a newly generated JaCoCo XML report, and then prints repository-level coverage summaries. If Codex repair is unavailable, the direct build remains the source of truth.
 
 ## License
 

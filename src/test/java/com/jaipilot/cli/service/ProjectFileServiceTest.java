@@ -2,10 +2,12 @@ package com.jaipilot.cli.service;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProjectFileServiceTest {
@@ -97,5 +99,104 @@ class ProjectFileServiceTest {
         assertFalse(Files.exists(destinationRoot.resolve("target/classes/Example.class")));
         assertFalse(Files.exists(destinationRoot.resolve("build/tmp/output.txt")));
         assertFalse(Files.exists(destinationRoot.resolve(".DS_Store")));
+    }
+
+    @Test
+    void writeFilesTransactionallyWritesEveryStagedFile() throws Exception {
+        Path existing = tempDir.resolve("src/test/java/com/example/ExistingTests.java");
+        Path created = tempDir.resolve("src/test/java/com/example/CreatedTests.java");
+        Files.createDirectories(existing.getParent());
+        Files.writeString(existing, "old");
+        Map<Path, ProjectFileService.FileFingerprint> baseline = projectFileService.snapshotJavaTestFiles(tempDir);
+
+        projectFileService.writeFilesTransactionally(
+                Map.of(existing, "updated", created, "created"),
+                baseline
+        );
+
+        assertEquals("updated", Files.readString(existing));
+        assertEquals("created", Files.readString(created));
+    }
+
+    @Test
+    void javaSourceSnapshotIncludesProductionAndTestsButNotBuildOutputs() throws Exception {
+        Path production = tempDir.resolve("src/main/java/com/example/Example.java");
+        Path test = tempDir.resolve("src/test/java/com/example/ExampleTests.java");
+        Path generated = tempDir.resolve("target/generated-sources/Generated.java");
+        Files.createDirectories(production.getParent());
+        Files.createDirectories(test.getParent());
+        Files.createDirectories(generated.getParent());
+        Files.writeString(production, "class Example {}");
+        Files.writeString(test, "class ExampleTests {}");
+        Files.writeString(generated, "class Generated {}");
+
+        Map<Path, ProjectFileService.FileFingerprint> snapshot = projectFileService.snapshotJavaSourceFiles(tempDir);
+
+        assertEquals(java.util.Set.of(production, test), snapshot.keySet());
+    }
+
+    @Test
+    void writeFilesTransactionallyRejectsDriftWithoutOverwritingUserChanges() throws Exception {
+        Path existing = tempDir.resolve("src/test/java/com/example/ExistingTests.java");
+        Path created = tempDir.resolve("src/test/java/com/example/CreatedTests.java");
+        Files.createDirectories(existing.getParent());
+        Files.writeString(existing, "baseline");
+        Map<Path, ProjectFileService.FileFingerprint> baseline = projectFileService.snapshotJavaTestFiles(tempDir);
+        Files.writeString(existing, "user edit");
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> projectFileService.writeFilesTransactionally(
+                        Map.of(existing, "generated", created, "created"),
+                        baseline
+                )
+        );
+
+        assertEquals("user edit", Files.readString(existing));
+        assertFalse(Files.exists(created));
+    }
+
+    @Test
+    void stagingFailureLeavesEarlierFilesUnchanged() throws Exception {
+        Path existing = tempDir.resolve("src/test/java/a/ExistingTests.java");
+        Path blockingParent = tempDir.resolve("src/test/java/z-blocker");
+        Path blockedOutput = blockingParent.resolve("BlockedTests.java");
+        Files.createDirectories(existing.getParent());
+        Files.writeString(existing, "original");
+        Files.writeString(blockingParent, "not a directory");
+        Map<Path, ProjectFileService.FileFingerprint> baseline = projectFileService.snapshotJavaTestFiles(tempDir);
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> projectFileService.writeFilesTransactionally(
+                        Map.of(existing, "generated", blockedOutput, "blocked"),
+                        baseline
+                )
+        );
+
+        assertEquals("original", Files.readString(existing));
+        assertEquals("not a directory", Files.readString(blockingParent));
+    }
+
+    @Test
+    void moveFailureRollsBackFilesAlreadyReplaced() throws Exception {
+        Path existing = tempDir.resolve("src/test/java/a/ExistingTests.java");
+        Path invalidDestination = tempDir.resolve("src/test/java/z/DirectoryTests.java");
+        Files.createDirectories(existing.getParent());
+        Files.createDirectories(invalidDestination);
+        Files.writeString(existing, "original");
+        Files.writeString(invalidDestination.resolve("keep.txt"), "keep");
+        Map<Path, ProjectFileService.FileFingerprint> baseline = projectFileService.snapshotJavaTestFiles(tempDir);
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> projectFileService.writeFilesTransactionally(
+                        Map.of(existing, "generated", invalidDestination, "cannot replace a directory"),
+                        baseline
+                )
+        );
+
+        assertEquals("original", Files.readString(existing));
+        assertEquals("keep", Files.readString(invalidDestination.resolve("keep.txt")));
     }
 }

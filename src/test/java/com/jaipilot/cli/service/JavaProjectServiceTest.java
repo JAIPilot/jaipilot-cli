@@ -40,6 +40,9 @@ class JavaProjectServiceTest {
         Files.writeString(wrapperProperties, "distributionUrl=https://repo.maven.apache.org/maven2");
         writeJava(projectRoot.resolve("src/main/java/com/example/OrderService.java"), "OrderService");
         writeJava(projectRoot.resolve("src/main/java/com/example/LegacyService.java"), "LegacyService");
+        writeJava(projectRoot.resolve("src/main/java/com/example/RepositoryContract.java"), "RepositoryContract");
+        Path packageInfo = projectRoot.resolve("src/main/java/com/example/package-info.java");
+        Files.writeString(packageInfo, "package com.example;\n");
         writeJava(projectRoot.resolve("src/test/java/com/example/OrderServiceTest.java"), "OrderServiceTest");
 
         Path reportPath = projectRoot.resolve("target/site/jacoco/jacoco.xml");
@@ -54,6 +57,9 @@ class JavaProjectServiceTest {
                     <class name="com/example/LegacyService">
                       <counter type="LINE" missed="7" covered="3"/>
                       <counter type="BRANCH" missed="4" covered="0"/>
+                    </class>
+                    <class name="com/example/RepositoryContract">
+                      <counter type="METHOD" missed="0" covered="0"/>
                     </class>
                   </package>
                   <counter type="LINE" missed="8" covered="12"/>
@@ -70,6 +76,30 @@ class JavaProjectServiceTest {
         assertEquals("com.example.LegacyService", belowThreshold.get(0).fullyQualifiedName());
         assertTrue(service.supportsCoverage(projectRoot));
         assertEquals("./mvnw", service.resolveBuildWrapper(projectRoot).orElseThrow());
+    }
+
+    @Test
+    void findChangedProductionClassesExcludesPackageInfo() throws Exception {
+        Path projectRoot = tempDir.resolve("sample-changed");
+        Files.createDirectories(projectRoot);
+        Files.writeString(projectRoot.resolve("pom.xml"), "<project/>");
+        Process gitInit = new ProcessBuilder("git", "init", "-q")
+                .directory(projectRoot.toFile())
+                .start();
+        assertEquals(0, gitInit.waitFor());
+
+        writeJava(projectRoot.resolve("src/main/java/com/example/OrderService.java"), "OrderService");
+        Path packageInfo = projectRoot.resolve("src/main/java/com/example/package-info.java");
+        Files.writeString(packageInfo, "package com.example;\n");
+
+        JavaProjectService service = new JavaProjectService(new ProjectFileService(), new CoverageReportService());
+
+        assertEquals(
+                List.of("com.example.OrderService"),
+                service.findChangedProductionClasses(projectRoot).stream()
+                        .map(JavaProjectService.JavaClassDescriptor::fullyQualifiedName)
+                        .toList()
+        );
     }
 
     @Test

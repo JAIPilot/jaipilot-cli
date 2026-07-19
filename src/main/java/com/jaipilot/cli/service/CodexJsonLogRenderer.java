@@ -6,11 +6,35 @@ import com.jaipilot.cli.ui.TerminalUi;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class CodexJsonLogRenderer implements ProcessExecutor.OutputListener {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final int MAX_COMMAND_DISPLAY_LENGTH = 240;
+    private static final Pattern ANSI_ESCAPE = Pattern.compile("\\u001B\\[[;?\\d]*[ -/]*[@-~]");
+    private static final Pattern STRUCTURED_DIAGNOSTIC = Pattern.compile(
+            "^(?:\\d{4}-\\d{2}-\\d{2}T\\S+\\s+)?(TRACE|DEBUG|INFO|WARN|WARNING|ERROR)\\s+"
+                    + "[\\w.$-]+(?:::[\\w.$-]+)*:\\s*(.*)$",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern SIMPLE_DIAGNOSTIC = Pattern.compile(
+            "^(ERROR|WARN|WARNING|INFO)\\s*[:=-]\\s*(.*)$",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern SHELL_LAUNCHER = Pattern.compile(
+            "^(?:(?:['\"]?/usr/bin/env['\"]?\\s+)?['\"]?(?:/bin/)?(?:bash|zsh|sh)['\"]?\\s+"
+                    + "['\"]?-(?:lc|cl|c)['\"]?\\s+)(.+)$"
+    );
+    private static final List<String> SUPPRESSED_DIAGNOSTIC_FRAGMENTS = List.of(
+            "state db missing rollout path for thread",
+            "failed to delete shell snapshot",
+            "failed to remove shell snapshot",
+            "unable to remove shell snapshot"
+    );
 
     private final TerminalUi ui;
     private final PrintWriter out;
@@ -36,18 +60,22 @@ public final class CodexJsonLogRenderer implements ProcessExecutor.OutputListene
         }
         JsonNode root = parse(line);
         if (root == null) {
-            return line;
+            return renderDiagnostic(line);
         }
         String type = root.path("type").asText("");
         return switch (type) {
             case "thread.started" -> format(TerminalUi.Tone.PRIMARY, "codex", "session started");
             case "turn.started" -> format(TerminalUi.Tone.PRIMARY, "codex", "generation started");
             case "turn.completed" -> format(TerminalUi.Tone.SUCCESS, "codex", "generation completed");
-            case "turn.failed" -> format(TerminalUi.Tone.ERROR, "codex", nonBlank(
-                    extractText(root),
+            case "turn.failed" -> format(TerminalUi.Tone.ERROR, "codex error", nonBlank(
+                    extractFailureText(root),
                     "generation failed"
             ));
-            case "error" -> format(TerminalUi.Tone.ERROR, "codex", nonBlank(extractText(root), "unexpected error"));
+            case "error" -> format(
+                    TerminalUi.Tone.ERROR,
+                    "codex error",
+                    nonBlank(extractText(root), "unexpected error")
+            );
             default -> renderItemEvent(type, root.path("item"));
         };
     }
@@ -82,15 +110,18 @@ public final class CodexJsonLogRenderer implements ProcessExecutor.OutputListene
     }
 
     private String renderCommandExecution(String state, JsonNode item) {
-        String command = nonBlank(item.path("command").asText(""), extractText(item));
+        String command = normalizeCommand(nonBlank(extractCommand(item), extractText(item)));
         if (command == null || command.isBlank()) {
             command = "shell command";
         }
-        return switch (state) {
-            case "started" -> format(TerminalUi.Tone.PRIMARY, "shell", command);
-            case "failed" -> format(TerminalUi.Tone.ERROR, "shell", command);
-            default -> null;
-        };
+        boolean failed = "failed".equals(state)
+                || "failed".equalsIgnoreCase(item.path("status").asText(""))
+                || hasNonZeroExitCode(item);
+        if (failed) {
+            String exitSuffix = hasNonZeroExitCode(item) ? " (exit " + item.path("exit_code").asInt() + ")" : "";
+            return format(TerminalUi.Tone.ERROR, "shell failed", command + exitSuffix);
+        }
+        return "started".equals(state) ? format(TerminalUi.Tone.PRIMARY, "shell", command) : null;
     }
 
     private String renderMcpToolCall(String state, JsonNode item) {
@@ -158,7 +189,139 @@ public final class CodexJsonLogRenderer implements ProcessExecutor.OutputListene
     }
 
     private String format(TerminalUi.Tone tone, String label, String message) {
-        return ui.badge(tone, label) + " " + message;
+        String normalized = message.replace("\r\n", "\n").replace('\r', '\n');
+        String continuationIndent = " ".repeat(label.length() + 3);
+        return ui.badge(tone, label) + " " + normalized.replace("\n", "\n" + continuationIndent);
+    }
+
+    private String renderDiagnostic(String line) {
+        String normalized = normalizeWhitespace(ANSI_ESCAPE.matcher(line).replaceAll(""));
+        if (normalized == null || normalized.isBlank() || isKnownInternalNoise(normalized)) {
+            return null;
+        }
+
+        Matcher structured = STRUCTURED_DIAGNOSTIC.matcher(normalized);
+        if (structured.matches()) {
+            String severity = structured.group(1).toUpperCase(Locale.ROOT);
+            if ("TRACE".equals(severity) || "DEBUG".equals(severity)) {
+                return null;
+            }
+            return format(
+                    diagnosticTone(severity),
+                    diagnosticLabel(severity),
+                    nonBlank(cleanDiagnosticMessage(structured.group(2)), "Codex diagnostic")
+            );
+        }
+
+        Matcher simple = SIMPLE_DIAGNOSTIC.matcher(normalized);
+        if (simple.matches()) {
+            String severity = simple.group(1).toUpperCase(Locale.ROOT);
+            return format(
+                    diagnosticTone(severity),
+                    diagnosticLabel(severity),
+                    nonBlank(cleanDiagnosticMessage(simple.group(2)), "Codex diagnostic")
+            );
+        }
+        return format(TerminalUi.Tone.PRIMARY, "codex", normalized);
+    }
+
+    private TerminalUi.Tone diagnosticTone(String severity) {
+        return switch (severity) {
+            case "ERROR" -> TerminalUi.Tone.ERROR;
+            case "WARN", "WARNING" -> TerminalUi.Tone.WARN;
+            default -> TerminalUi.Tone.PRIMARY;
+        };
+    }
+
+    private String diagnosticLabel(String severity) {
+        return switch (severity) {
+            case "ERROR" -> "codex error";
+            case "WARN", "WARNING" -> "codex warning";
+            default -> "codex";
+        };
+    }
+
+    private String cleanDiagnosticMessage(String message) {
+        if (message == null) {
+            return null;
+        }
+        return normalizeWhitespace(message.replaceFirst("(?i)^(?:error|warning|message)\\s*=\\s*", ""));
+    }
+
+    private boolean isKnownInternalNoise(String line) {
+        String lowerCase = line.toLowerCase(Locale.ROOT);
+        return SUPPRESSED_DIAGNOSTIC_FRAGMENTS.stream().anyMatch(lowerCase::contains);
+    }
+
+    private String extractCommand(JsonNode item) {
+        JsonNode command = item.path("command");
+        if (command.isTextual()) {
+            return command.asText();
+        }
+        if (command.isArray()) {
+            List<String> parts = new ArrayList<>();
+            for (JsonNode part : command) {
+                if (part.isValueNode() && !part.asText().isBlank()) {
+                    parts.add(part.asText());
+                }
+            }
+            return parts.isEmpty() ? null : String.join(" ", parts);
+        }
+        return null;
+    }
+
+    private boolean hasNonZeroExitCode(JsonNode item) {
+        JsonNode exitCode = item.path("exit_code");
+        return exitCode.isIntegralNumber() && exitCode.asInt() != 0;
+    }
+
+    private String normalizeCommand(String command) {
+        String normalized = normalizeWhitespace(command);
+        if (normalized == null || normalized.isBlank()) {
+            return normalized;
+        }
+        Matcher shellLauncher = SHELL_LAUNCHER.matcher(normalized);
+        if (shellLauncher.matches()) {
+            normalized = shellLauncher.group(1).trim();
+        }
+        normalized = simplifyShellQuoting(stripMatchingOuterQuotes(normalized));
+        normalized = normalizeWhitespace(normalized);
+        return abbreviateMiddle(normalized, MAX_COMMAND_DISPLAY_LENGTH);
+    }
+
+    private String simplifyShellQuoting(String value) {
+        return value
+                .replace("'\"'\"'", "'")
+                .replace("'\\''", "'")
+                .replace("\\\"", "\"");
+    }
+
+    private String stripMatchingOuterQuotes(String value) {
+        if (value.length() < 2) {
+            return value;
+        }
+        char first = value.charAt(0);
+        char last = value.charAt(value.length() - 1);
+        if ((first == '\'' || first == '\"') && first == last) {
+            return value.substring(1, value.length() - 1).trim();
+        }
+        return value;
+    }
+
+    private String abbreviateMiddle(String value, int maximumLength) {
+        if (value == null || value.length() <= maximumLength) {
+            return value;
+        }
+        String separator = " ... ";
+        int tailLength = 64;
+        int headLength = maximumLength - separator.length() - tailLength;
+        return value.substring(0, headLength).stripTrailing()
+                + separator
+                + value.substring(value.length() - tailLength).stripLeading();
+    }
+
+    private String normalizeWhitespace(String value) {
+        return value == null ? null : value.replaceAll("\\s+", " ").trim();
     }
 
     private JsonNode parse(String line) {
@@ -268,6 +431,13 @@ public final class CodexJsonLogRenderer implements ProcessExecutor.OutputListene
             }
         }
         return null;
+    }
+
+    private String extractFailureText(JsonNode root) {
+        return firstNonBlank(
+                extractText(root.path("error")),
+                extractText(root)
+        );
     }
 
     private String nonBlank(String value, String fallback) {

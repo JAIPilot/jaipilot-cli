@@ -42,11 +42,14 @@ Update this file when any of these change:
 - Default coverage threshold is `80%`.
 - Explicit class generation skips the repository preparation pass so Codex focuses on the requested class and its generated test.
 - Explicit class generation reports target-class coverage only; focused JaCoCo runs can overwrite whole-project totals with single-test execution data.
-- Batch and coverage modes may run a preparation pass before class-specific generation starts.
+- Batch and coverage modes invalidate stale JaCoCo XML before preparation, then require Codex to regenerate it before target selection.
+- Parallel workers return every touched Java test; JAIPilot merges non-conflicting outputs deterministically and rejects divergent same-path edits.
+- JAIPilot disables nested Codex agents inside workers because the CLI already owns batch parallelism.
+- After batch merging, Codex may repair only allowlisted generated tests in a disposable workspace; JAIPilot transactionally merges those repairs, always runs the clean build directly, checks every touched generated test report, and requires fresh JaCoCo XML before reporting success.
 - Codex is expected to determine the final test file path and class name from repository conventions.
 - Codex is expected to own the test-run, fix, and coverage loop during generation.
 - The interactive shell stores history at `~/.jaipilot/history`.
-- The CLI UX favors structured sections, tables, coverage meters, and spinners over raw tool logs.
+- The CLI UX favors structured sections, tables, coverage meters, cleaned Codex diagnostics, and spinners over raw tool logs or JSON.
 - Coverage discovery currently looks for JaCoCo XML reports under:
   - `target/site/jacoco/jacoco.xml`
   - `target/site/jacoco-*/jacoco.xml`

@@ -38,6 +38,7 @@ class PromptTemplateServiceTest {
         assertTrue(prompt.contains("keep iterating until that target test passes"));
         assertTrue(prompt.contains("report that blocker instead of fixing unrelated code or tests"));
         assertTrue(prompt.contains("isolated sandbox workspace in parallel"));
+        assertTrue(prompt.contains("name matches the build's test-discovery includes"));
         assertFalse(prompt.contains("package com.example; class OrderService {}"));
         assertFalse(prompt.contains("Target test class:"));
         assertFalse(prompt.contains("com.example.OrderServiceTest"));
@@ -58,5 +59,22 @@ class PromptTemplateServiceTest {
         assertTrue(prompt.contains("Do not stop until the repository is in a working state"));
         assertFalse(prompt.contains("Supabase"));
         assertFalse(prompt.contains("JAIPilot backend"));
+    }
+
+    @Test
+    void buildBatchValidationPromptRequiresCleanDiscoveredTestsAndFreshCoverage() {
+        Path projectRoot = tempDir.resolve("sample");
+        Path generatedTest = projectRoot.resolve("src/test/java/com/example/OrderServiceTests.java");
+
+        String prompt = promptTemplateService.buildBatchValidationPrompt(projectRoot, java.util.List.of(generatedTest));
+
+        assertTrue(prompt.contains("Validate the merged Java tests"));
+        assertTrue(prompt.contains("Project root: `" + projectRoot + "`"));
+        assertTrue(prompt.contains("clean full test suite"));
+        assertTrue(prompt.contains("actually discovers and executes the generated tests"));
+        assertTrue(prompt.contains("freshly generated JaCoCo XML report"));
+        assertTrue(prompt.contains("Do not modify production code."));
+        assertTrue(prompt.contains("- " + generatedTest));
+        assertTrue(prompt.contains("Do not edit any path outside the generated test file allowlist"));
     }
 }

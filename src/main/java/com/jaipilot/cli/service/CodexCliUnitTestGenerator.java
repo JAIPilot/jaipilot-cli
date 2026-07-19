@@ -4,23 +4,33 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jaipilot.cli.ui.TerminalUi;
 import java.io.PrintWriter;
+import java.io.Writer;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class CodexCliUnitTestGenerator {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final Duration PREPARATION_TIMEOUT = Duration.ofMinutes(30);
     private static final Duration CODEX_TIMEOUT = Duration.ofMinutes(20);
+    private static final Duration BUILD_VERIFICATION_TIMEOUT = Duration.ofMinutes(30);
     private static final String MAVEN_OPTS = "MAVEN_OPTS";
     private static final String MAVEN_TRACKING_PROPERTY = "aether.enhancedLocalRepository.trackingFilename";
     private static final String MAVEN_TRACKING_OPTION = "-D" + MAVEN_TRACKING_PROPERTY + "=ignore";
     private static final String GRADLE_USER_HOME = "GRADLE_USER_HOME";
+    private static final Pattern TEST_COUNT_PATTERN = Pattern.compile("<testsuite\\b[^>]*\\btests=\"(\\d+)\"");
 
     private final ProjectFileService fileService;
     private final JavaProjectService projectService;
@@ -119,6 +129,7 @@ public final class CodexCliUnitTestGenerator {
         );
         return new GenerationResult(
                 generatedTest.testPath(),
+                touchedTests.stream().map(JavaProjectService.JavaTestDescriptor::testPath).toList(),
                 initialUsage,
                 coverageDelta,
                 testExistedBefore,
@@ -145,15 +156,184 @@ public final class CodexCliUnitTestGenerator {
             PrintWriter logWriter
     ) throws Exception {
         ensureCodexAvailable(projectRoot);
+        invalidateCoverageReport(projectRoot);
         String basePrompt = promptTemplateService.buildPreparationPrompt(projectRoot);
+        AgentUsage usage = runReadinessWorkflow(
+                projectRoot,
+                model,
+                ui,
+                showLogs,
+                showProgress,
+                logWriter,
+                basePrompt,
+                "codex preparing project",
+                "codex repairing project",
+                "Codex failed while preparing the project:",
+                "Codex failed while repairing the project:",
+                "preparation"
+        );
+        runCleanBuildVerification(projectRoot, ui, showLogs, logWriter, List.of());
+        return usage;
+    }
+
+    public AgentUsage validateBatch(
+            Path projectRoot,
+            String model,
+            TerminalUi ui,
+            boolean showLogs,
+            PrintWriter logWriter,
+            List<Path> expectedTestPaths
+    ) throws Exception {
+        List<Path> normalizedExpectedTests = normalizeExpectedTestPaths(projectRoot, expectedTestPaths);
+        Map<Path, ProjectFileService.FileFingerprint> testBaseline = fileService.snapshotJavaTestFiles(projectRoot);
+        AgentUsage usage = AgentUsage.zero();
+        Exception repairFailure = null;
+        try {
+            ensureCodexAvailable(projectRoot);
+            usage = repairBatchInIsolatedWorkspace(
+                    projectRoot,
+                    model,
+                    ui,
+                    showLogs,
+                    logWriter,
+                    normalizedExpectedTests,
+                    testBaseline
+            );
+        } catch (Exception exception) {
+            repairFailure = exception;
+            ui.warn("Codex repair was unavailable; continuing with direct clean verification: "
+                    + firstLine(exception.getMessage()));
+        }
+        try {
+            runCleanBuildVerification(projectRoot, ui, showLogs, logWriter, normalizedExpectedTests);
+            return usage;
+        } catch (Exception verificationFailure) {
+            if (repairFailure != null) {
+                verificationFailure.addSuppressed(repairFailure);
+            }
+            throw verificationFailure;
+        }
+    }
+
+    private AgentUsage repairBatchInIsolatedWorkspace(
+            Path projectRoot,
+            String model,
+            TerminalUi ui,
+            boolean showLogs,
+            PrintWriter logWriter,
+            List<Path> expectedTestPaths,
+            Map<Path, ProjectFileService.FileFingerprint> testBaseline
+    ) throws Exception {
+        Path sandboxRoot = Files.createTempDirectory("jaipilot-validation-");
+        try {
+            fileService.copyProjectWorkspace(projectRoot, sandboxRoot);
+            List<Path> sandboxExpectedTests = expectedTestPaths.stream()
+                    .map(path -> rebaseIntoSandbox(projectRoot, sandboxRoot, path))
+                    .toList();
+            Map<Path, ProjectFileService.FileFingerprint> sourceBaseline = fileService.snapshotJavaSourceFiles(sandboxRoot);
+            invalidateCoverageReport(sandboxRoot);
+            AgentUsage usage = runReadinessWorkflow(
+                    sandboxRoot,
+                    model,
+                    ui,
+                    showLogs,
+                    true,
+                    logWriter,
+                    promptTemplateService.buildBatchValidationPrompt(sandboxRoot, sandboxExpectedTests),
+                    "codex validating merged tests",
+                    "codex repairing merged tests",
+                    "Codex failed while validating the merged tests:",
+                    "Codex failed while repairing the merged tests:",
+                    "batch validation"
+            );
+
+            Map<Path, ProjectFileService.FileFingerprint> sourceAfterRepair = fileService.snapshotJavaSourceFiles(sandboxRoot);
+            List<Path> unexpectedChanges = findUnexpectedJavaChanges(
+                    sourceBaseline,
+                    sourceAfterRepair,
+                    new LinkedHashSet<>(sandboxExpectedTests)
+            );
+            if (!unexpectedChanges.isEmpty()) {
+                throw new IllegalStateException("Codex validation edited files outside the generated-test allowlist: "
+                        + unexpectedChanges);
+            }
+
+            Map<Path, String> repairedTests = new LinkedHashMap<>();
+            for (int index = 0; index < expectedTestPaths.size(); index++) {
+                Path sandboxTest = sandboxExpectedTests.get(index);
+                if (!Files.isRegularFile(sandboxTest)) {
+                    throw new IllegalStateException("Codex validation removed an expected generated test: " + sandboxTest);
+                }
+                repairedTests.put(expectedTestPaths.get(index), fileService.readFile(sandboxTest));
+            }
+            fileService.writeFilesTransactionally(repairedTests, testBaseline);
+            return usage;
+        } finally {
+            fileService.deleteRecursively(sandboxRoot);
+        }
+    }
+
+    private List<Path> normalizeExpectedTestPaths(Path projectRoot, List<Path> expectedTestPaths) {
+        Path normalizedRoot = projectRoot.toAbsolutePath().normalize();
+        return expectedTestPaths.stream()
+                .map(path -> path.isAbsolute() ? path : normalizedRoot.resolve(path))
+                .map(path -> path.toAbsolutePath().normalize())
+                .peek(path -> {
+                    if (!path.startsWith(normalizedRoot)) {
+                        throw new IllegalStateException("Generated test is outside the project root: " + path);
+                    }
+                })
+                .distinct()
+                .sorted()
+                .toList();
+    }
+
+    private Path rebaseIntoSandbox(Path projectRoot, Path sandboxRoot, Path projectPath) {
+        Path normalizedRoot = projectRoot.toAbsolutePath().normalize();
+        Path normalizedPath = projectPath.toAbsolutePath().normalize();
+        if (!normalizedPath.startsWith(normalizedRoot)) {
+            throw new IllegalStateException("Generated test is outside the project root: " + projectPath);
+        }
+        return sandboxRoot.resolve(normalizedRoot.relativize(normalizedPath)).normalize();
+    }
+
+    static List<Path> findUnexpectedJavaChanges(
+            Map<Path, ProjectFileService.FileFingerprint> before,
+            Map<Path, ProjectFileService.FileFingerprint> after,
+            Set<Path> allowedPaths
+    ) {
+        Set<Path> normalizedAllowedPaths = allowedPaths.stream()
+                .map(Path::normalize)
+                .collect(java.util.stream.Collectors.toSet());
+        Set<Path> allPaths = new TreeSet<>();
+        allPaths.addAll(before.keySet());
+        allPaths.addAll(after.keySet());
+        return allPaths.stream()
+                .filter(path -> !normalizedAllowedPaths.contains(path.normalize()))
+                .filter(path -> !Objects.equals(before.get(path), after.get(path)))
+                .toList();
+    }
+
+    private AgentUsage runReadinessWorkflow(
+            Path projectRoot,
+            String model,
+            TerminalUi ui,
+            boolean showLogs,
+            boolean showProgress,
+            PrintWriter logWriter,
+            String basePrompt,
+            String initialProgressLabel,
+            String retryProgressLabel,
+            String initialFailurePrefix,
+            String retryFailurePrefix,
+            String workflowName
+    ) throws Exception {
         String prompt = basePrompt;
         AgentUsage totalUsage = AgentUsage.zero();
 
         for (int attempt = 1; attempt <= 3; attempt++) {
-            String progressLabel = attempt == 1 ? "codex preparing project" : "codex repairing project";
-            String failurePrefix = attempt == 1
-                    ? "Codex failed while preparing the project:"
-                    : "Codex failed while repairing the project:";
+            String progressLabel = attempt == 1 ? initialProgressLabel : retryProgressLabel;
+            String failurePrefix = attempt == 1 ? initialFailurePrefix : retryFailurePrefix;
             try {
                 totalUsage = totalUsage.plus(runCodex(
                         projectRoot,
@@ -168,7 +348,7 @@ public final class CodexCliUnitTestGenerator {
                         failurePrefix
                 ));
             } catch (Exception failure) {
-                if (attempt == 3) {
+                if (attempt == 3 || isNonRetryableCodexFailure(failure)) {
                     throw failure;
                 }
                 prompt = buildPreparationRetryPrompt(basePrompt, List.of(failure.getMessage()));
@@ -181,7 +361,7 @@ public final class CodexCliUnitTestGenerator {
             }
             if (attempt == 3) {
                 throw new IllegalStateException(
-                        "Codex completed preparation but the repository is still not ready:"
+                        "Codex completed " + workflowName + " but the repository is still not ready:"
                                 + System.lineSeparator()
                                 + String.join(System.lineSeparator(), readinessIssues)
                 );
@@ -189,7 +369,152 @@ public final class CodexCliUnitTestGenerator {
             prompt = buildPreparationRetryPrompt(basePrompt, readinessIssues);
         }
 
-        throw new IllegalStateException("Project preparation exited without a final readiness result.");
+        throw new IllegalStateException("Project " + workflowName + " exited without a final readiness result.");
+    }
+
+    boolean isNonRetryableCodexFailure(Throwable failure) {
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            String message = current.getMessage();
+            if (message != null && message.toLowerCase(java.util.Locale.ROOT).contains("usage limit")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void invalidateCoverageReport(Path projectRoot) {
+        coverageReportService.findCoverageReports(projectRoot).forEach(reportPath -> {
+            try {
+                Files.deleteIfExists(reportPath);
+            } catch (Exception exception) {
+                throw new IllegalStateException("Failed to remove stale JaCoCo report " + reportPath, exception);
+            }
+        });
+    }
+
+    private void runCleanBuildVerification(
+            Path projectRoot,
+            TerminalUi ui,
+            boolean showLogs,
+            PrintWriter logWriter,
+            List<Path> expectedTestPaths
+    ) throws Exception {
+        invalidateCoverageReport(projectRoot);
+        JavaProjectService.BuildTool buildTool = projectService.detectBuildTool(projectRoot);
+        String executable = projectService.resolveBuildWrapper(projectRoot).orElseGet(() -> switch (buildTool) {
+            case MAVEN -> "mvn";
+            case GRADLE -> "gradle";
+        });
+        List<String> command = switch (buildTool) {
+            case MAVEN -> List.of(executable, "-B", "clean", "verify");
+            case GRADLE -> List.of(executable, "--no-daemon", "clean", "test", "jacocoTestReport");
+        };
+        if (showLogs) {
+            logWriter.printf("%s %s%n", ui.badge(TerminalUi.Tone.PRIMARY, "verify"), formatCommand(command));
+            logWriter.flush();
+        }
+
+        ProcessExecutor.ExecutionResult result = processExecutor.execute(
+                command,
+                projectRoot,
+                BUILD_VERIFICATION_TIMEOUT,
+                showLogs,
+                logWriter,
+                null,
+                showLogs
+                        ? ProcessExecutor.ProgressListener.noOp()
+                        : ui.spinner("running clean full test suite"),
+                ProcessExecutor.OutputListener.noOp(),
+                buildToolCacheEnvironment(projectRoot, System.getenv())
+        );
+        if (result.timedOut()) {
+            throw new IllegalStateException("Clean full-suite verification timed out after "
+                    + BUILD_VERIFICATION_TIMEOUT.toMinutes() + " minutes.");
+        }
+        if (result.exitCode() != 0) {
+            throw new IllegalStateException("Clean full-suite verification failed:" + System.lineSeparator()
+                    + tailBuildOutput(result.output()));
+        }
+        if (coverageReportService.readProjectSnapshot(projectRoot).isEmpty()) {
+            throw new IllegalStateException("Clean full-suite verification did not generate a readable JaCoCo XML report.");
+        }
+        List<String> missingReports = findMissingTestReports(projectRoot, expectedTestPaths);
+        if (!missingReports.isEmpty()) {
+            throw new IllegalStateException("Clean full-suite verification did not execute generated tests: "
+                    + String.join(", ", missingReports));
+        }
+    }
+
+    List<String> findMissingTestReports(Path projectRoot, List<Path> expectedTestPaths) {
+        Map<Path, List<String>> reportNamesByModule = new LinkedHashMap<>();
+        List<String> missing = new ArrayList<>();
+        for (Path testPath : expectedTestPaths.stream().distinct().sorted().toList()) {
+            if (!Files.isRegularFile(testPath)) {
+                missing.add(testPath.toString());
+                continue;
+            }
+            JavaProjectService.JavaTestDescriptor descriptor = projectService.describeTestClass(testPath, projectRoot);
+            String expectedReport = "TEST-" + descriptor.fullyQualifiedName() + ".xml";
+            List<String> moduleReports = reportNamesByModule.computeIfAbsent(
+                    descriptor.moduleRoot(),
+                    this::findTestReportNames
+            );
+            if (!moduleReports.contains(expectedReport)) {
+                missing.add(descriptor.fullyQualifiedName());
+            }
+        }
+        return List.copyOf(missing);
+    }
+
+    private List<String> findTestReportNames(Path moduleRoot) {
+        List<Path> reportRoots = List.of(
+                moduleRoot.resolve("target/surefire-reports"),
+                moduleRoot.resolve("target/failsafe-reports"),
+                moduleRoot.resolve("build/test-results")
+        );
+        List<String> reportNames = new ArrayList<>();
+        for (Path reportRoot : reportRoots) {
+            if (!Files.isDirectory(reportRoot)) {
+                continue;
+            }
+            try (var paths = Files.walk(reportRoot)) {
+                paths.filter(Files::isRegularFile)
+                        .filter(path -> {
+                            String fileName = path.getFileName().toString();
+                            return fileName.startsWith("TEST-") && fileName.endsWith(".xml");
+                        })
+                        .filter(this::containsExecutedTests)
+                        .map(path -> path.getFileName().toString())
+                        .forEach(reportNames::add);
+            } catch (Exception exception) {
+                throw new IllegalStateException("Failed to inspect clean test results under " + reportRoot, exception);
+            }
+        }
+        return reportNames.stream().distinct().toList();
+    }
+
+    private boolean containsExecutedTests(Path reportPath) {
+        try {
+            Matcher matcher = TEST_COUNT_PATTERN.matcher(Files.readString(reportPath));
+            return matcher.find() && Long.parseLong(matcher.group(1)) > 0L;
+        } catch (Exception exception) {
+            throw new IllegalStateException("Failed to inspect test count in " + reportPath, exception);
+        }
+    }
+
+    private String tailBuildOutput(String output) {
+        List<String> lines = output == null ? List.of() : output.lines()
+                .map(String::stripTrailing)
+                .filter(line -> !line.isBlank())
+                .toList();
+        int start = Math.max(0, lines.size() - 40);
+        return String.join(System.lineSeparator(), lines.subList(start, lines.size()));
+    }
+
+    private String firstLine(String message) {
+        return message == null || message.isBlank()
+                ? "unknown Codex failure"
+                : message.lines().findFirst().orElse(message);
     }
 
     private void ensureCodexAvailable(Path workingDirectory) {
@@ -210,18 +535,7 @@ public final class CodexCliUnitTestGenerator {
             String progressLabel,
             String failurePrefix
     ) throws Exception {
-        List<String> command = new ArrayList<>();
-        command.add("codex");
-        command.add("-a");
-        command.add("never");
-        command.add("-c");
-        command.add("hide_agent_reasoning=true");
-        command.add("-s");
-        command.add("workspace-write");
-        if (model != null && !model.isBlank()) {
-            command.add("-m");
-            command.add(model.trim());
-        }
+        List<String> command = buildCodexCommand(model);
         command.add("exec");
         command.add("--json");
         command.add("--skip-git-repo-check");
@@ -246,10 +560,28 @@ public final class CodexCliUnitTestGenerator {
         }
         if (result.exitCode() != 0) {
             throw new IllegalStateException(
-                    failurePrefix + System.lineSeparator() + tail(result.output())
+                    failurePrefix + System.lineSeparator() + summarizeFailure(result.output(), ui)
             );
         }
         return parseUsage(result.output());
+    }
+
+    List<String> buildCodexCommand(String model) {
+        List<String> command = new ArrayList<>();
+        command.add("codex");
+        command.add("-a");
+        command.add("never");
+        command.add("-c");
+        command.add("hide_agent_reasoning=true");
+        command.add("-c");
+        command.add("features.multi_agent=false");
+        command.add("-s");
+        command.add("workspace-write");
+        if (model != null && !model.isBlank()) {
+            command.add("-m");
+            command.add(model.trim());
+        }
+        return command;
     }
 
     private CoverageDelta captureCoverageDelta(
@@ -377,7 +709,7 @@ public final class CodexCliUnitTestGenerator {
             environment.put(MAVEN_OPTS, appendJvmOption(mavenOpts, MAVEN_TRACKING_OPTION));
         }
         if (!currentEnvironment.containsKey(GRADLE_USER_HOME)) {
-            environment.put(GRADLE_USER_HOME, projectRoot.resolve("build/jaipilot-gradle").normalize().toString());
+            environment.put(GRADLE_USER_HOME, projectRoot.resolve(".gradle/jaipilot").normalize().toString());
         }
         return environment;
     }
@@ -399,14 +731,34 @@ public final class CodexCliUnitTestGenerator {
         }
         return "\"" + value.replace("\"", "\\\"") + "\"";
     }
-    private String tail(String output) {
-        List<String> lines = output == null ? List.of() : output.lines().toList();
-        int start = Math.max(0, lines.size() - 60);
-        return String.join(System.lineSeparator(), lines.subList(start, lines.size()));
+    String summarizeFailure(String output, TerminalUi ui) {
+        CodexJsonLogRenderer renderer = new CodexJsonLogRenderer(
+                ui,
+                new PrintWriter(Writer.nullWriter())
+        );
+        List<String> rendered = (output == null ? List.<String>of() : output.lines().toList()).stream()
+                .map(renderer::render)
+                .filter(value -> value != null && !value.isBlank())
+                .toList();
+        List<String> important = rendered.stream()
+                .filter(value -> {
+                    String lowerCase = value.toLowerCase(java.util.Locale.ROOT);
+                    return lowerCase.contains("error")
+                            || lowerCase.contains("failed")
+                            || lowerCase.contains("warning");
+                })
+                .toList();
+        List<String> selected = important.isEmpty() ? rendered : important;
+        if (selected.isEmpty()) {
+            return "Codex exited without a readable error. Re-run with --show-logs for details.";
+        }
+        int start = Math.max(0, selected.size() - 8);
+        return String.join(System.lineSeparator(), selected.subList(start, selected.size()));
     }
 
     public record GenerationResult(
             Path outputPath,
+            List<Path> touchedTestPaths,
             AgentUsage usage,
             CoverageDelta coverageDelta,
             boolean testExistedBefore,
@@ -434,7 +786,7 @@ public final class CodexCliUnitTestGenerator {
         }
 
         public long totalTokens() {
-            return inputTokens + cachedInputTokens + outputTokens + reasoningOutputTokens;
+            return inputTokens + outputTokens;
         }
     }
 
