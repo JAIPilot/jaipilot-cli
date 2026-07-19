@@ -58,6 +58,14 @@ public final class JavaProjectService {
                 .flatMap(buildTool -> buildTool.wrapperCommand(projectRoot));
     }
 
+    public String resolveBuildExecutable(Path projectRoot) {
+        BuildTool buildTool = detectBuildTool(projectRoot);
+        return resolveBuildWrapper(projectRoot).orElseGet(() -> switch (buildTool) {
+            case MAVEN -> "mvn";
+            case GRADLE -> "gradle";
+        });
+    }
+
     public JavaClassDescriptor resolveClass(Path projectRoot, String selector) {
         if (selector == null || selector.isBlank()) {
             throw new IllegalArgumentException("A class selector is required.");
@@ -115,6 +123,15 @@ public final class JavaProjectService {
                 .orElseThrow(() -> new IllegalStateException(
                         "No JaCoCo XML report found. Generate coverage first, then retry."
                 ));
+        return findClassesBelowCoverage(projectRoot, threshold, snapshot);
+    }
+
+    public List<JavaClassDescriptor> findClassesBelowCoverage(
+            Path projectRoot,
+            double threshold,
+            CoverageReportService.CoverageSnapshot snapshot
+    ) {
+        Objects.requireNonNull(snapshot, "snapshot");
         return sorted(findProductionClasses(projectRoot).stream()
                 .filter(descriptor -> snapshot.classCoverageByName()
                         .getOrDefault(
@@ -181,6 +198,20 @@ public final class JavaProjectService {
 
     public boolean supportsCoverage(Path projectRoot) {
         return detectBuildTool(projectRoot).supportsCoverage(projectRoot);
+    }
+
+    public boolean usesGradleCoverageAggregation(Path projectRoot) {
+        try (var paths = Files.walk(projectRoot, 2)) {
+            return paths.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().equals("build.gradle")
+                            || path.getFileName().toString().equals("build.gradle.kts"))
+                    .map(fileService::readFile)
+                    .map(contents -> contents.toLowerCase(Locale.ROOT))
+                    .anyMatch(contents -> contents.contains("jacoco-report-aggregation")
+                            || contents.contains("testcodecoveragereport"));
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to inspect Gradle coverage configuration under " + projectRoot, exception);
+        }
     }
 
     private List<String> changedPaths(Path projectRoot) {

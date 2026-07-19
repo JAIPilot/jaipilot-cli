@@ -73,6 +73,17 @@ class InteractiveShellCompleterTest {
         assertTrue(statusThresholds.contains("80"));
     }
 
+    @Test
+    void statusCompletionSuggestsFreshnessAndLogOptions() throws Exception {
+        InteractiveShellCompleter completer = completerForSampleProject();
+
+        List<String> values = candidateValues(completer.suggest("/status ", 8));
+
+        assertTrue(values.contains("--cached"));
+        assertTrue(values.contains("--show-logs"));
+        assertTrue(values.contains("--threshold"));
+    }
+
     private InteractiveShellCompleter completerForSampleProject() throws Exception {
         Path projectRoot = tempDir.resolve("sample");
         Files.createDirectories(projectRoot);

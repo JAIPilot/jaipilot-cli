@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import javax.xml.XMLConstants;
@@ -16,7 +17,9 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
+import org.xml.sax.ErrorHandler;
 import org.xml.sax.InputSource;
+import org.xml.sax.SAXParseException;
 
 public final class CoverageReportService {
 
@@ -28,7 +31,7 @@ public final class CoverageReportService {
         List<Path> matches = new ArrayList<>();
         try (var paths = Files.walk(projectRoot)) {
             paths.filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName().toString().equals("jacoco.xml"))
+                    .filter(this::isCoverageReportFile)
                     .filter(this::isKnownCoverageReportLocation)
                     .forEach(matches::add);
         } catch (IOException exception) {
@@ -40,13 +43,31 @@ public final class CoverageReportService {
     }
 
     public Optional<CoverageSnapshot> readProjectSnapshot(Path projectRoot) {
-        return findCoverageReport(projectRoot).map(this::readReportSnapshot);
+        List<Path> reports = findCoverageReports(projectRoot);
+        if (reports.isEmpty()) {
+            return Optional.empty();
+        }
+        if (reports.size() == 1) {
+            return Optional.of(readReportSnapshot(reports.get(0)));
+        }
+        List<Path> aggregateReports = reports.stream()
+                .filter(this::isAggregateCoverageReport)
+                .toList();
+        if (aggregateReports.size() == 1) {
+            return Optional.of(readReportSnapshot(aggregateReports.get(0)));
+        }
+        throw new IllegalStateException(
+                "Multiple JaCoCo XML reports were found. Configure one aggregate report so coverage is not assigned "
+                        + "to the wrong module: " + reports
+        );
     }
 
     public CoverageSnapshot readReportSnapshot(Path reportPath) {
         Document document = parse(reportPath);
         Map<String, ClassCoverage> coverageByClass = new HashMap<>();
-        for (Element packageElement : childElements(document.getDocumentElement(), "package")) {
+        NodeList packageElements = document.getElementsByTagName("package");
+        for (int packageIndex = 0; packageIndex < packageElements.getLength(); packageIndex++) {
+            Element packageElement = (Element) packageElements.item(packageIndex);
             for (Element classElement : childElements(packageElement, "class")) {
                 String fullyQualifiedName = classElement.getAttribute("name").replace('/', '.');
                 double lineCoverage = readCoverage(classElement, "LINE", 100.0d);
@@ -73,6 +94,22 @@ public final class CoverageReportService {
             var builder = factory.newDocumentBuilder();
             // JaCoCo reports commonly declare report.dtd, but coverage parsing only needs the XML payload.
             builder.setEntityResolver((publicId, systemId) -> new InputSource(new StringReader("")));
+            builder.setErrorHandler(new ErrorHandler() {
+                @Override
+                public void warning(SAXParseException exception) {
+                    // Warnings do not make an otherwise readable report unusable.
+                }
+
+                @Override
+                public void error(SAXParseException exception) throws SAXParseException {
+                    throw exception;
+                }
+
+                @Override
+                public void fatalError(SAXParseException exception) throws SAXParseException {
+                    throw exception;
+                }
+            });
             return builder.parse(inputStream);
         } catch (Exception exception) {
             throw new IllegalStateException("Failed to parse JaCoCo report " + reportPath, exception);
@@ -124,6 +161,17 @@ public final class CoverageReportService {
                 || normalized.contains("/target/site/jacoco-")
                 || normalized.contains("/target/coverage-reports/")
                 || normalized.contains("/build/reports/jacoco/");
+    }
+
+    private boolean isCoverageReportFile(Path path) {
+        return path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".xml");
+    }
+
+    private boolean isAggregateCoverageReport(Path path) {
+        String normalized = normalize(path).toLowerCase(Locale.ROOT);
+        return normalized.contains("/jacoco-aggregate/")
+                || normalized.contains("/jacoco/aggregate/")
+                || normalized.contains("testcodecoveragereport");
     }
 
     public record CoverageSnapshot(

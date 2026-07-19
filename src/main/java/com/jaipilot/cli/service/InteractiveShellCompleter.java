@@ -30,7 +30,7 @@ public final class InteractiveShellCompleter implements Completer {
             "--model",
             "--show-logs"
     );
-    private static final List<String> STATUS_OPTIONS = List.of("--threshold");
+    private static final List<String> STATUS_OPTIONS = List.of("--threshold", "--cached", "--show-logs");
     private static final List<String> THRESHOLD_VALUES = List.of("70", "75", "80", "85", "90", "95");
     private static final List<String> GENERATE_ALL_VALUES = List.of("changed", "uncommitted", "coverage", "for");
     private static final List<String> FOR_VALUES = List.of("uncommitted", "80", "85", "90");

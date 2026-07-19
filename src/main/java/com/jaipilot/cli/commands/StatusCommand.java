@@ -1,6 +1,7 @@
 package com.jaipilot.cli.commands;
 
 import com.jaipilot.cli.service.CoverageReportService;
+import com.jaipilot.cli.service.CoverageRefreshService;
 import com.jaipilot.cli.service.JavaProjectService;
 import com.jaipilot.cli.service.ProjectFileService;
 import com.jaipilot.cli.ui.TerminalUi;
@@ -19,7 +20,7 @@ import picocli.CommandLine.Model.CommandSpec;
 @Command(
         name = "status",
         mixinStandardHelpOptions = true,
-        description = "Shows Java coverage status, JaCoCo totals, and classes below the threshold."
+        description = "Refreshes full-suite coverage, then shows JaCoCo totals and classes below the threshold."
 )
 public final class StatusCommand implements Callable<Integer> {
 
@@ -33,11 +34,23 @@ public final class StatusCommand implements Callable<Integer> {
     )
     private double threshold;
 
+    @Option(
+            names = "--cached",
+            description = "Read the existing JaCoCo XML without running the full test suite."
+    )
+    private boolean cached;
+
+    @Option(
+            names = "--show-logs",
+            description = "Stream build output while refreshing coverage."
+    )
+    private boolean showLogs;
+
     @Spec
     private CommandSpec spec;
 
     private final JavaProjectService projectService;
-    private final CoverageReportService coverageReportService;
+    private final CoverageRefreshService coverageRefreshService;
 
     public StatusCommand() {
         this(new ProjectFileService(), new CoverageReportService());
@@ -45,7 +58,7 @@ public final class StatusCommand implements Callable<Integer> {
 
     StatusCommand(ProjectFileService fileService, CoverageReportService coverageReportService) {
         this.projectService = new JavaProjectService(fileService, coverageReportService);
-        this.coverageReportService = coverageReportService;
+        this.coverageRefreshService = new CoverageRefreshService(projectService, coverageReportService);
     }
 
     @Override
@@ -53,24 +66,49 @@ public final class StatusCommand implements Callable<Integer> {
         if (threshold <= 0 || threshold > 100) {
             throw new CommandLine.ParameterException(spec.commandLine(), "--threshold must be between 0 and 100.");
         }
+        if (cached && showLogs) {
+            throw new CommandLine.ParameterException(spec.commandLine(), "--show-logs cannot be used with --cached.");
+        }
 
         TerminalUi ui = new TerminalUi(spec.commandLine().getOut());
         Path projectRoot = projectService.resolveProjectRoot(Path.of("").toAbsolutePath().normalize());
-        CoverageReportService.CoverageSnapshot snapshot = coverageReportService.readProjectSnapshot(projectRoot)
-                .orElseThrow(() -> new CommandLine.ParameterException(
-                        spec.commandLine(),
-                        "No JaCoCo XML report found under the current project."
-                ));
+        ui.printBanner("JaCoCo status and threshold tracking");
+        LinkedHashMap<String, String> projectMetadata = new LinkedHashMap<>();
+        projectMetadata.put("project", projectRoot.toString());
+        projectMetadata.put("threshold", "%.1f%%".formatted(threshold));
+        ui.printKeyValues(projectMetadata);
+
+        ui.section("Coverage Source");
+        CoverageReportService.CoverageSnapshot snapshot;
+        String coverageSource;
+        if (cached) {
+            snapshot = coverageRefreshService.readCachedSnapshot(projectRoot)
+                    .orElseThrow(() -> new CommandLine.ParameterException(
+                            spec.commandLine(),
+                            "No cached JaCoCo XML report found under the current project."
+                    ));
+            ui.warn("Using cached JaCoCo XML without running tests; it may reflect a focused or older run.");
+            coverageSource = "cached report";
+        } else {
+            snapshot = coverageRefreshService.refresh(
+                    projectRoot,
+                    ui,
+                    showLogs,
+                    spec.commandLine().getOut()
+            );
+            ui.success("Clean full-suite coverage refreshed.");
+            coverageSource = "fresh full suite";
+        }
+        ui.blankLine();
         List<JavaProjectService.JavaClassDescriptor> belowThreshold = projectService.findClassesBelowCoverage(
                 projectRoot,
-                threshold
+                threshold,
+                snapshot
         );
 
-        ui.printBanner("JaCoCo status and threshold tracking");
         LinkedHashMap<String, String> metadata = new LinkedHashMap<>();
-        metadata.put("project", projectRoot.toString());
+        metadata.put("coverage source", coverageSource);
         metadata.put("report", snapshot.reportPath().toString());
-        metadata.put("threshold", "%.1f%%".formatted(threshold));
         metadata.put("below threshold", String.valueOf(belowThreshold.size()));
         ui.printKeyValues(metadata);
         ui.section("Totals");
@@ -98,7 +136,7 @@ public final class StatusCommand implements Callable<Integer> {
                     ui.formatTestState(testPresence.getOrDefault(descriptor, false))
             ));
         }
-        ui.printTable(List.of("Class", "Line", "Branch", "Tests"), rows);
+        ui.printTable(List.of("Class", "Line", "Branch", "Test file"), rows);
         ui.info("Use `jaipilot generate --coverage-below %.0f` to target this set.".formatted(threshold));
         return CommandLine.ExitCode.OK;
     }

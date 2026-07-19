@@ -25,11 +25,6 @@ public final class CodexCliUnitTestGenerator {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final Duration PREPARATION_TIMEOUT = Duration.ofMinutes(30);
     private static final Duration CODEX_TIMEOUT = Duration.ofMinutes(20);
-    private static final Duration BUILD_VERIFICATION_TIMEOUT = Duration.ofMinutes(30);
-    private static final String MAVEN_OPTS = "MAVEN_OPTS";
-    private static final String MAVEN_TRACKING_PROPERTY = "aether.enhancedLocalRepository.trackingFilename";
-    private static final String MAVEN_TRACKING_OPTION = "-D" + MAVEN_TRACKING_PROPERTY + "=ignore";
-    private static final String GRADLE_USER_HOME = "GRADLE_USER_HOME";
     private static final Pattern TEST_COUNT_PATTERN = Pattern.compile("<testsuite\\b[^>]*\\btests=\"(\\d+)\"");
 
     private final ProjectFileService fileService;
@@ -37,6 +32,7 @@ public final class CodexCliUnitTestGenerator {
     private final CoverageReportService coverageReportService;
     private final ProcessExecutor processExecutor;
     private final PromptTemplateService promptTemplateService;
+    private final CoverageRefreshService coverageRefreshService;
 
     public CodexCliUnitTestGenerator(ProjectFileService fileService, JavaProjectService projectService) {
         this(
@@ -60,6 +56,12 @@ public final class CodexCliUnitTestGenerator {
         this.coverageReportService = coverageReportService;
         this.processExecutor = processExecutor;
         this.promptTemplateService = promptTemplateService;
+        this.coverageRefreshService = new CoverageRefreshService(
+                projectService,
+                coverageReportService,
+                processExecutor,
+                Duration.ofMinutes(30)
+        );
     }
 
     public Optional<String> codexVersion(Path workingDirectory) {
@@ -137,7 +139,7 @@ public final class CodexCliUnitTestGenerator {
         );
     }
 
-    public AgentUsage prepareProject(
+    public ProjectPreparation prepareProject(
             Path projectRoot,
             String model,
             TerminalUi ui,
@@ -147,7 +149,7 @@ public final class CodexCliUnitTestGenerator {
         return prepareProject(projectRoot, model, ui, showLogs, true, logWriter);
     }
 
-    public AgentUsage prepareProject(
+    public ProjectPreparation prepareProject(
             Path projectRoot,
             String model,
             TerminalUi ui,
@@ -156,27 +158,36 @@ public final class CodexCliUnitTestGenerator {
             PrintWriter logWriter
     ) throws Exception {
         ensureCodexAvailable(projectRoot);
-        invalidateCoverageReport(projectRoot);
-        String basePrompt = promptTemplateService.buildPreparationPrompt(projectRoot);
-        AgentUsage usage = runReadinessWorkflow(
-                projectRoot,
-                model,
-                ui,
-                showLogs,
-                showProgress,
-                logWriter,
-                basePrompt,
-                "codex preparing project",
-                "codex repairing project",
-                "Codex failed while preparing the project:",
-                "Codex failed while repairing the project:",
-                "preparation"
-        );
-        runCleanBuildVerification(projectRoot, ui, showLogs, logWriter, List.of());
-        return usage;
+        try (CoverageRefreshService.ProjectRefreshLock ignored = coverageRefreshService.acquireProjectLock(projectRoot)) {
+            invalidateCoverageReport(projectRoot);
+            String basePrompt = promptTemplateService.buildPreparationPrompt(projectRoot);
+            AgentUsage usage = runReadinessWorkflow(
+                    projectRoot,
+                    model,
+                    ui,
+                    showLogs,
+                    showProgress,
+                    logWriter,
+                    basePrompt,
+                    "codex preparing project",
+                    "codex repairing project",
+                    "Codex failed while preparing the project:",
+                    "Codex failed while repairing the project:",
+                    "preparation"
+            );
+            CoverageReportService.CoverageSnapshot snapshot = runCleanBuildVerification(
+                    projectRoot,
+                    ui,
+                    showLogs,
+                    logWriter,
+                    List.of(),
+                    true
+            );
+            return new ProjectPreparation(usage, snapshot);
+        }
     }
 
-    public AgentUsage validateBatch(
+    public BatchValidation validateBatch(
             Path projectRoot,
             String model,
             TerminalUi ui,
@@ -205,8 +216,14 @@ public final class CodexCliUnitTestGenerator {
                     + firstLine(exception.getMessage()));
         }
         try {
-            runCleanBuildVerification(projectRoot, ui, showLogs, logWriter, normalizedExpectedTests);
-            return usage;
+            CoverageReportService.CoverageSnapshot snapshot = runCleanBuildVerification(
+                    projectRoot,
+                    ui,
+                    showLogs,
+                    logWriter,
+                    normalizedExpectedTests
+            );
+            return new BatchValidation(usage, snapshot);
         } catch (Exception verificationFailure) {
             if (repairFailure != null) {
                 verificationFailure.addSuppressed(repairFailure);
@@ -383,66 +400,67 @@ public final class CodexCliUnitTestGenerator {
     }
 
     void invalidateCoverageReport(Path projectRoot) {
-        coverageReportService.findCoverageReports(projectRoot).forEach(reportPath -> {
-            try {
-                Files.deleteIfExists(reportPath);
-            } catch (Exception exception) {
-                throw new IllegalStateException("Failed to remove stale JaCoCo report " + reportPath, exception);
-            }
-        });
+        coverageRefreshService.invalidateCoverageReports(projectRoot);
     }
 
-    private void runCleanBuildVerification(
+    private CoverageReportService.CoverageSnapshot runCleanBuildVerification(
             Path projectRoot,
             TerminalUi ui,
             boolean showLogs,
             PrintWriter logWriter,
             List<Path> expectedTestPaths
     ) throws Exception {
-        invalidateCoverageReport(projectRoot);
-        JavaProjectService.BuildTool buildTool = projectService.detectBuildTool(projectRoot);
-        String executable = projectService.resolveBuildWrapper(projectRoot).orElseGet(() -> switch (buildTool) {
-            case MAVEN -> "mvn";
-            case GRADLE -> "gradle";
-        });
-        List<String> command = switch (buildTool) {
-            case MAVEN -> List.of(executable, "-B", "clean", "verify");
-            case GRADLE -> List.of(executable, "--no-daemon", "clean", "test", "jacocoTestReport");
-        };
-        if (showLogs) {
-            logWriter.printf("%s %s%n", ui.badge(TerminalUi.Tone.PRIMARY, "verify"), formatCommand(command));
-            logWriter.flush();
-        }
+        return runCleanBuildVerification(projectRoot, ui, showLogs, logWriter, expectedTestPaths, false);
+    }
 
-        ProcessExecutor.ExecutionResult result = processExecutor.execute(
-                command,
+    private CoverageReportService.CoverageSnapshot runCleanBuildVerification(
+            Path projectRoot,
+            TerminalUi ui,
+            boolean showLogs,
+            PrintWriter logWriter,
+            List<Path> expectedTestPaths,
+            boolean projectLockHeld
+    ) throws Exception {
+        if (projectLockHeld) {
+            return refreshAndVerifyWithProjectLock(
+                    projectRoot,
+                    ui,
+                    showLogs,
+                    logWriter,
+                    expectedTestPaths
+            );
+        }
+        try (CoverageRefreshService.ProjectRefreshLock ignored = coverageRefreshService.acquireProjectLock(projectRoot)) {
+            return refreshAndVerifyWithProjectLock(
+                    projectRoot,
+                    ui,
+                    showLogs,
+                    logWriter,
+                    expectedTestPaths
+            );
+        }
+    }
+
+    private CoverageReportService.CoverageSnapshot refreshAndVerifyWithProjectLock(
+            Path projectRoot,
+            TerminalUi ui,
+            boolean showLogs,
+            PrintWriter logWriter,
+            List<Path> expectedTestPaths
+    ) {
+        CoverageReportService.CoverageSnapshot snapshot = coverageRefreshService.refreshWithProjectLock(
                 projectRoot,
-                BUILD_VERIFICATION_TIMEOUT,
+                ui,
                 showLogs,
-                logWriter,
-                null,
-                showLogs
-                        ? ProcessExecutor.ProgressListener.noOp()
-                        : ui.spinner("running clean full test suite"),
-                ProcessExecutor.OutputListener.noOp(),
-                buildToolCacheEnvironment(projectRoot, System.getenv())
+                logWriter
         );
-        if (result.timedOut()) {
-            throw new IllegalStateException("Clean full-suite verification timed out after "
-                    + BUILD_VERIFICATION_TIMEOUT.toMinutes() + " minutes.");
-        }
-        if (result.exitCode() != 0) {
-            throw new IllegalStateException("Clean full-suite verification failed:" + System.lineSeparator()
-                    + tailBuildOutput(result.output()));
-        }
-        if (coverageReportService.readProjectSnapshot(projectRoot).isEmpty()) {
-            throw new IllegalStateException("Clean full-suite verification did not generate a readable JaCoCo XML report.");
-        }
         List<String> missingReports = findMissingTestReports(projectRoot, expectedTestPaths);
         if (!missingReports.isEmpty()) {
+            invalidateCoverageReport(projectRoot);
             throw new IllegalStateException("Clean full-suite verification did not execute generated tests: "
                     + String.join(", ", missingReports));
         }
+        return snapshot;
     }
 
     List<String> findMissingTestReports(Path projectRoot, List<Path> expectedTestPaths) {
@@ -502,22 +520,13 @@ public final class CodexCliUnitTestGenerator {
         }
     }
 
-    private String tailBuildOutput(String output) {
-        List<String> lines = output == null ? List.of() : output.lines()
-                .map(String::stripTrailing)
-                .filter(line -> !line.isBlank())
-                .toList();
-        int start = Math.max(0, lines.size() - 40);
-        return String.join(System.lineSeparator(), lines.subList(start, lines.size()));
-    }
-
     private String firstLine(String message) {
         return message == null || message.isBlank()
                 ? "unknown Codex failure"
                 : message.lines().findFirst().orElse(message);
     }
 
-    private void ensureCodexAvailable(Path workingDirectory) {
+    public void ensureCodexAvailable(Path workingDirectory) {
         if (codexVersion(workingDirectory).isEmpty()) {
             throw new IllegalStateException("Codex CLI is not installed or not available on PATH.");
         }
@@ -553,7 +562,7 @@ public final class CodexCliUnitTestGenerator {
                 prompt,
                 progressListener(ui, progressLabel, showLogs, showProgress),
                 logRenderer,
-                buildToolCacheEnvironment(workingDirectory, System.getenv())
+                CoverageRefreshService.buildToolCacheEnvironment(workingDirectory, System.getenv())
         );
         if (result.timedOut()) {
             throw new IllegalStateException(failurePrefix + System.lineSeparator() + "Timed out.");
@@ -702,27 +711,7 @@ public final class CodexCliUnitTestGenerator {
     }
 
     static Map<String, String> buildToolCacheEnvironment(Path workingDirectory, Map<String, String> currentEnvironment) {
-        Path projectRoot = workingDirectory.toAbsolutePath().normalize();
-        Map<String, String> environment = new LinkedHashMap<>();
-        String mavenOpts = currentEnvironment.getOrDefault(MAVEN_OPTS, "");
-        if (!containsMavenTrackingOverride(mavenOpts)) {
-            environment.put(MAVEN_OPTS, appendJvmOption(mavenOpts, MAVEN_TRACKING_OPTION));
-        }
-        if (!currentEnvironment.containsKey(GRADLE_USER_HOME)) {
-            environment.put(GRADLE_USER_HOME, projectRoot.resolve(".gradle/jaipilot").normalize().toString());
-        }
-        return environment;
-    }
-
-    private static boolean containsMavenTrackingOverride(String value) {
-        return value != null && value.contains(MAVEN_TRACKING_PROPERTY);
-    }
-
-    private static String appendJvmOption(String existingValue, String option) {
-        if (existingValue == null || existingValue.isBlank()) {
-            return option;
-        }
-        return existingValue.stripTrailing() + " " + option;
+        return CoverageRefreshService.buildToolCacheEnvironment(workingDirectory, currentEnvironment);
     }
 
     private String quoteIfNeeded(String value) {
@@ -763,6 +752,18 @@ public final class CodexCliUnitTestGenerator {
             CoverageDelta coverageDelta,
             boolean testExistedBefore,
             String note
+    ) {
+    }
+
+    public record ProjectPreparation(
+            AgentUsage usage,
+            CoverageReportService.CoverageSnapshot coverageSnapshot
+    ) {
+    }
+
+    public record BatchValidation(
+            AgentUsage usage,
+            CoverageReportService.CoverageSnapshot coverageSnapshot
     ) {
     }
 

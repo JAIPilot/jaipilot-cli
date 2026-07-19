@@ -45,4 +45,16 @@ class InteractiveShellTranslationTest {
                 shell.translate("/generate all for uncommitted --model 'gpt 5'")
         );
     }
+
+    @Test
+    void statusCachedAliasSkipsTheRefreshExplicitly() {
+        assertArrayEquals(
+                new String[] {"status", "--cached", "--threshold", "90"},
+                shell.translate("/status cached 90%")
+        );
+        assertArrayEquals(
+                new String[] {"status", "--threshold", "90", "--show-logs"},
+                shell.translate("/status 90% --show-logs")
+        );
+    }
 }

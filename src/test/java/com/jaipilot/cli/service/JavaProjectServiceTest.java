@@ -76,6 +76,49 @@ class JavaProjectServiceTest {
         assertEquals("com.example.LegacyService", belowThreshold.get(0).fullyQualifiedName());
         assertTrue(service.supportsCoverage(projectRoot));
         assertEquals("./mvnw", service.resolveBuildWrapper(projectRoot).orElseThrow());
+        assertEquals("./mvnw", service.resolveBuildExecutable(projectRoot));
+    }
+
+    @Test
+    void suppliedCoverageSnapshotIsAuthoritativeWhenDiskReportDiffers() throws Exception {
+        Path projectRoot = tempDir.resolve("sample-snapshot");
+        Files.createDirectories(projectRoot);
+        Files.writeString(projectRoot.resolve("pom.xml"), "<project/>\n");
+        writeJava(projectRoot.resolve("src/main/java/com/example/OrderService.java"), "OrderService");
+        writeJava(projectRoot.resolve("src/main/java/com/example/LegacyService.java"), "LegacyService");
+
+        Path diskReport = projectRoot.resolve("target/site/jacoco/jacoco.xml");
+        Files.createDirectories(diskReport.getParent());
+        Files.writeString(diskReport, """
+                <report name="stale">
+                  <package name="com/example">
+                    <class name="com/example/OrderService">
+                      <counter type="LINE" missed="10" covered="0"/>
+                    </class>
+                    <class name="com/example/LegacyService">
+                      <counter type="LINE" missed="0" covered="10"/>
+                    </class>
+                  </package>
+                </report>
+                """);
+        CoverageReportService.CoverageSnapshot suppliedSnapshot = new CoverageReportService.CoverageSnapshot(
+                projectRoot.resolve("fresh-jacoco.xml"),
+                60.0d,
+                50.0d,
+                Map.of(
+                        "com.example.OrderService",
+                        new CoverageReportService.ClassCoverage("com.example.OrderService", 100.0d, 100.0d),
+                        "com.example.LegacyService",
+                        new CoverageReportService.ClassCoverage("com.example.LegacyService", 20.0d, 0.0d)
+                )
+        );
+        JavaProjectService service = new JavaProjectService(new ProjectFileService(), new CoverageReportService());
+
+        List<String> belowThreshold = service.findClassesBelowCoverage(projectRoot, 80.0d, suppliedSnapshot).stream()
+                .map(JavaProjectService.JavaClassDescriptor::fullyQualifiedName)
+                .toList();
+
+        assertEquals(List.of("com.example.LegacyService"), belowThreshold);
     }
 
     @Test

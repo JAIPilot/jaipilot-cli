@@ -59,6 +59,16 @@ class JunitLlmCommandHelpIntegrationTest {
     }
 
     @Test
+    void statusHelpExplainsFreshAndCachedModes() {
+        String helpOutput = executeHelp("status");
+
+        assertTrue(helpOutput.contains("--cached"));
+        assertTrue(helpOutput.contains("--show-logs"));
+        assertTrue(helpOutput.contains("--threshold"));
+        assertTrue(helpOutput.contains("existing JaCoCo XML"));
+    }
+
+    @Test
     void invalidGenerateArgumentsShowFriendlyErrorWithoutStackTrace() {
         StringWriter errBuffer = new StringWriter();
         CommandLine commandLine = JaiPilotCommandLineFactory.configure(new CommandLine(new JaiPilotCli()))

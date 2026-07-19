@@ -173,10 +173,20 @@ public final class InteractiveShell {
             return Arrays.copyOf(tokens, tokens.length);
         }
         if ("status".equals(tokens[0])) {
-            if (tokens.length == 2 && !tokens[1].startsWith("-")) {
-                return new String[] {"status", "--threshold", stripPercent(tokens[1])};
+            List<String> translated = new ArrayList<>();
+            translated.add("status");
+            int trailingStart = 1;
+            if (tokens.length > trailingStart && "cached".equals(tokens[trailingStart])) {
+                translated.add("--cached");
+                trailingStart++;
             }
-            return Arrays.copyOf(tokens, tokens.length);
+            if (tokens.length > trailingStart && !tokens[trailingStart].startsWith("-")) {
+                translated.add("--threshold");
+                translated.add(stripPercent(tokens[trailingStart]));
+                trailingStart++;
+            }
+            translated.addAll(Arrays.asList(tokens).subList(trailingStart, tokens.length));
+            return translated.toArray(String[]::new);
         }
         if (!"generate".equals(tokens[0])) {
             return new String[0];
